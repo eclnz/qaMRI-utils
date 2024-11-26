@@ -928,29 +928,29 @@ def extract_fields(json_path: str, fields_to_extract: List[str], warn: bool = Tr
             display_warning(f'Missing field "{field}" in JSON file: {json_path}')
     return attributes
 
-# if __name__ == "__main__":
-#     import argparse
-
-#     parser = argparse.ArgumentParser(description="Convert DICOM files to BIDS-compliant NIfTI format")
-#     parser.add_argument("data_directory", help="Path to the directory containing subject folders with DICOM files.")
-#     parser.add_argument("bids_output_dir", help="Path to the BIDS output directory.")
-#     parser.add_argument("--transfer", action="store_true", help="Only transfer DICOM attributes to .json sidecar without DICOM-to-NIfTI conversion.")
-#     parser.add_argument("--zip", action="store_true", help="Enable searching through zip files in addition to folders.")
-
-#     args = parser.parse_args()
-
-#     dcm2bids(args.data_directory, args.bids_output_dir, args.transfer, args.zip)
-
-# For debugging purposes: Manually sets folder.
-def main():
-    # Manually specify the variables
-    data_directory = "../qaMRI-clone/testData/raw_r"  # Replace with the actual path
-    bids_output_dir = "../qaMRI-clone/testData/BIDS8"  # Replace with the actual path
-    transfer = False  # Set to True to only transfer DICOM attributes without conversion
-    zip = False
-    
-    # Run the function
-    dcm2bids(data_directory, bids_output_dir, transfer, zip)
-
 if __name__ == "__main__":
-    main()
+    import argparse
+
+    parser = argparse.ArgumentParser(description="Convert DICOM files to BIDS-compliant NIfTI format")
+    parser.add_argument("data_directory", help="Path to the directory containing subject folders with DICOM files.")
+    parser.add_argument("bids_output_dir", help="Path to the BIDS output directory.")
+    parser.add_argument("--transfer", action="store_true", help="Only transfer DICOM attributes to .json sidecar without DICOM-to-NIfTI conversion.")
+    parser.add_argument("--zip", action="store_true", help="Enable searching through zip files in addition to folders. Will fall back on looking through zip when no scans are found.")
+
+    args = parser.parse_args()
+
+    dcm2bids(args.data_directory, args.bids_output_dir, args.transfer, args.zip)
+
+# # For debugging purposes: Manually sets folder.
+# def main():
+#     # Manually specify the variables
+#     data_directory = "../qaMRI-clone/testData/raw_r"  # Replace with the actual path
+#     bids_output_dir = "../qaMRI-clone/testData/BIDS8"  # Replace with the actual path
+#     transfer = False  # Set to True to only transfer DICOM attributes without conversion
+#     zip = False
+    
+#     # Run the function
+#     dcm2bids(data_directory, bids_output_dir, transfer, zip)
+
+# if __name__ == "__main__":
+#     main()
