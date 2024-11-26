@@ -18,6 +18,31 @@ from helperFunctions import sanitize_string
 import io
 from collections import defaultdict
 
+# Define categories and their keywords
+SCAN_CATEGORIES = {
+    "anat": ["t1", "t2", "flair", "amri", "anatomy", "bravo", "inhance", "stir", "sag"],
+    "dwi": ["dwi", "dki", "dsir", "dsires", "diffusion"],
+    "func": ["rs_", "resting", "fmri", "default_mode", "attention_network", "visual_network"],
+    "maps": ["map", "b0", "t1_map", "t2_map", "pd_map", "quantification"],
+    "asl": ["easl", "cbf", "transit_corrected", "perfusion", "asl"],
+    # Catch any scans that might not fit a primary modality but are still valid in BIDS
+    # "derivatives": ["processed", "synthetic", "segmentation", "screenshot", "sy", "mean_epi"],
+    "fmaps": ["phasediff", "magnitude", "fieldmap", "b0"],
+    # Add other specific modalities as needed (e.g., spectroscopy, PET, etc.)
+    "pet": ["pet", "suvr", "amyloid"],
+}
+
+def allocate_scan_to_group(scan_name: str) -> str:
+    """Allocates a scan to its appropriate group based on keywords."""
+    scan_name_lower = scan_name.lower()
+
+    for category, keywords in SCAN_CATEGORIES.items():
+        if any(keyword in scan_name_lower for keyword in keywords):
+            return category
+
+    # Default category for unmatched scans
+    return "other"
+
 def dcm2bids(data_directory: str, bids_output_dir: str, year: str, transfer: bool = False, zip: bool = False):
     bids_raw_output_dir = os.path.join(bids_output_dir, 'raw')
     
@@ -73,8 +98,11 @@ def dcm2bids(data_directory: str, bids_output_dir: str, year: str, transfer: boo
 
                 try:
                     # Standardize the scan name based on series description
+                    scan_group = allocate_scan_to_group(series_description)
                     standardized_scan_name = standardize_scan_name(series_description)
-                    out_path = os.path.join(bids_raw_output_dir, subject_name, session_name, 'anat')
+
+                    out_path = os.path.join(bids_raw_output_dir, subject_name, session_name, scan_group)
+                        
 
                     # Check if the raw path is from a ZIP
                     if '.zip:' in raw_path:
@@ -498,30 +526,74 @@ def display_dropdown_menu(str_list: list[str], title_text: str):
     return selected_series
 
 def standardize_scan_name(series_description: str) -> str:
-    """Standardizes scan name based on SeriesDescription."""
+    """Standardizes scan name based on SeriesDescription in BIDS format."""
     series_description = series_description.lower()
-    if 'amri' in series_description:
+
+    # Standard anatomical scans
+    if 't1' in series_description and 'flair' not in series_description:
+        return 'T1w'
+    elif 't2' in series_description and 'flair' not in series_description:
+        return 'T2w'
+    elif 'flair' in series_description:
+        return 'FLAIR'
+    elif 'pd' in series_description:
+        return 'PD'
+    elif 'inplane' in series_description:
+        return 'InplaneT1'
+    elif 'amri' in series_description:
         return 'aMRI'
-    elif 't1' in series_description:
-        return 'T1'
-    elif 't2' in series_description:
-        return 'T2'
-    elif 'dwi' in series_description:
+
+    # Diffusion-weighted imaging
+    elif 'dwi' in series_description or 'diffusion' in series_description:
         return 'dwi'
+    
+        # Diffusion-weighted imaging
+    elif 'dki' in series_description:
+        return 'dki'
+
+    # Functional scans
+    elif 'bold' in series_description or 'fmri' in series_description or 'resting' in series_description:
+        return 'bold'
+
+    # Arterial Spin Labeling
+    elif 'asl' in series_description or 'perfusion' in series_description:
+        return 'asl'
+
+    # Field maps
+    elif 'fieldmap' in series_description or 'phasediff' in series_description:
+        return 'phasediff'
+    elif 'magnitude' in series_description:
+        return 'magnitude'
+
+    # Quantitative maps
+    elif 'b0' in series_description:
+        return 'b0map'
+    elif 't1_map' in series_description:
+        return 'T1map'
+    elif 't2_map' in series_description:
+        return 'T2map'
+    elif 'pd_map' in series_description:
+        return 'PDmap'
+
+    # Spectroscopy
+    elif 'mrs' in series_description or 'spectroscopy' in series_description:
+        return 'mrs'
+
+    # Catch-all for unsupported scans
     else:
-        return series_description
+        return {series_description}
 
 def process_scan(dcm_path: str, out_path: str, subject_name: str, session_name: str, scan_name: str, bids_output_dir: str, transfer: bool):
     """Processes each scan, converting DICOM to NIfTI and transferring metadata."""
     os.makedirs(out_path, exist_ok=True)
-    dcm_folder = os.path.join(dcm_path,'..')
+    dcm_folder = os.path.dirname(dcm_path)
     
     nifti_file = os.path.join(out_path, f"{subject_name}_{session_name}_{scan_name}.nii.gz")
     json_file = os.path.join(out_path, f"{subject_name}_{session_name}_{scan_name}.json")
 
     # Check if the file exists
     if os.path.isfile(nifti_file):
-        print("\tSubject already processed. Skipping...")
+        print(f"  {scan_name} already processed. Skipping...")
         return
 
     # Skip processing if cardiac images are missing for aMRI scans
@@ -534,29 +606,38 @@ def process_scan(dcm_path: str, out_path: str, subject_name: str, session_name: 
         use_temp_dir = True
         display_warning(f"    Incorrect slice thickness detected for {subject_name}_{session_name}_{scan_name}. Adjusting in temporary folder.")
         dcm_folder = set_slice_thickness_temp(dcm_folder)
+    elif '.zip:' in dcm_path:
+        use_temp_dir = True
     else: 
         use_temp_dir = False
 
     # Check if output files already exist, unless we’re only transferring metadata
     if os.path.isfile(nifti_file) and os.path.isfile(json_file) and not transfer:
         print(f"Output for {subject_name}_{session_name}_{scan_name} already exists. Skipping...")
-    else:
-        # Convert DICOM to NIfTI unless we're only transferring metadata
-        if not transfer:
-            cmd = [
-                'dcm2niix', '-z', 'y', '-b', 'y', '-w', '0',
-                '-o', out_path, '-f', f"{subject_name}_{session_name}_{scan_name}", dcm_path
-            ]
-            result = subprocess.run(cmd, capture_output=True, text=True)
-            if result.returncode != 0:
-                raise RuntimeError(f"dcm2niix failed for scan: {dcm_path}\n{result.stderr}")
+        return
+    
+    # Convert DICOM to NIfTI unless we're only transferring metadata
+    if not transfer:
+        cmd = [
+            'dcm2niix', '-z', 'y', '-b', 'y', '-w', '0',
+            '-o', out_path, '-f', f"{subject_name}_{session_name}_{scan_name}", dcm_folder
+        ]
+        result = subprocess.run(cmd, capture_output=True, text=True)
+        
+        # dcm2niix returned an error code. why did 
+        if result.returncode != 0:
+            raise RuntimeError(f"dcm2niix failed for scan: {dcm_folder} {result.stderr}")
+        
+        # dcm2niix did not fail, but were the outputs successfully created?
+        if not (os.path.isfile(nifti_file) or os.path.isfile(json_file)):
+            raise RuntimeError(f"dcm2niix failed to create scan: {dcm_folder}\n{result.stderr}")
 
-        # Transfer specified DICOM fields to the JSON sidecar
-        transfer_dicom_fields_to_json(dcm_path, bids_output_dir, subject_name, session_name, scan_name, ['StudyDescription', 'SeriesDescription', 'AcquisitionDate', 'PatientAge', 'PatientWeight', 'PatientSex'])
+    # Transfer specified DICOM fields to the JSON sidecar
+    transfer_dicom_fields_to_json(dcm_path, json_file, subject_name, session_name, scan_name, ['StudyDescription', 'SeriesDescription', 'AcquisitionDate', 'PatientAge', 'PatientWeight', 'PatientSex'])
 
         # For aMRI scans, transfer HeartRate to the JSON sidecar
-        if scan_name == 'aMRI':
-            transfer_dicom_fields_to_json(dcm_path, bids_output_dir, subject_name, session_name, scan_name, ['HeartRate'])
+    if scan_name == 'aMRI':
+            transfer_dicom_fields_to_json(dcm_path, json_file, subject_name, session_name, scan_name, ['HeartRate'])
 
     # Remove temporary directory if used
     if use_temp_dir:
@@ -599,7 +680,7 @@ def check_cardiac_number_of_images(dicom_file_path: str) -> bool:
 
     return is_correct_number
 
-def transfer_dicom_fields_to_json(dicom_file_path: str, bids_output_dir: str, subject_name: str, session_name: str, scan_name: str, dicom_fields: List[str]):
+def transfer_dicom_fields_to_json(dicom_file_path: str, json_path: str, subject_name: str, session_name: str, scan_name: str, dicom_fields: List[str]):
     """
     Extract specified DICOM fields from files in a scan directory and update
     the corresponding BIDS JSON sidecar file with these fields.
@@ -615,10 +696,6 @@ def transfer_dicom_fields_to_json(dicom_file_path: str, bids_output_dir: str, su
     # Ensure the scan directory exists
     if not os.path.isfile(dicom_file_path):
         raise FileNotFoundError(f"Dicom does not exist: {dicom_file_path}")
-    
-    # Define the path to the expected JSON sidecar file
-    json_path = os.path.join(bids_output_dir, subject_name, session_name, 'anat',
-                             f"{subject_name}_{session_name}_{scan_name}.json")
 
     # Extract specified fields from the first DICOM file in the scan directory
     dicom_data = extract_dicom_fields(dicom_file_path, dicom_fields)
@@ -852,28 +929,28 @@ def extract_fields(json_path: str, fields_to_extract: List[str], warn: bool = Tr
     return attributes
 
 # if __name__ == "__main__":
-    import argparse
+#     import argparse
 
-    parser = argparse.ArgumentParser(description="Convert DICOM files to BIDS-compliant NIfTI format")
-    parser.add_argument("data_directory", help="Path to the directory containing subject folders with DICOM files.")
-    parser.add_argument("bids_output_dir", help="Path to the BIDS output directory.")
-    parser.add_argument("--transfer", action="store_true", help="Only transfer DICOM attributes to .json sidecar without DICOM-to-NIfTI conversion.")
-    parser.add_argument("--zip", action="store_true", help="Enable searching through zip files in addition to folders.")
+#     parser = argparse.ArgumentParser(description="Convert DICOM files to BIDS-compliant NIfTI format")
+#     parser.add_argument("data_directory", help="Path to the directory containing subject folders with DICOM files.")
+#     parser.add_argument("bids_output_dir", help="Path to the BIDS output directory.")
+#     parser.add_argument("--transfer", action="store_true", help="Only transfer DICOM attributes to .json sidecar without DICOM-to-NIfTI conversion.")
+#     parser.add_argument("--zip", action="store_true", help="Enable searching through zip files in addition to folders.")
 
-    args = parser.parse_args()
+#     args = parser.parse_args()
 
-    dcm2bids(args.data_directory, args.bids_output_dir, args.transfer, args.zip)
+#     dcm2bids(args.data_directory, args.bids_output_dir, args.transfer, args.zip)
 
-# # For debugging purposes: Manually sets folder.
-# def main():
-#     # Manually specify the variables
-#     data_directory = "../qaMRI-clone/testData/raw_r"  # Replace with the actual path
-#     bids_output_dir = "../qaMRI-clone/testData/BIDS7"  # Replace with the actual path
-#     transfer = False  # Set to True to only transfer DICOM attributes without conversion
-#     zip = False
+# For debugging purposes: Manually sets folder.
+def main():
+    # Manually specify the variables
+    data_directory = "../qaMRI-clone/testData/raw_r"  # Replace with the actual path
+    bids_output_dir = "../qaMRI-clone/testData/BIDS8"  # Replace with the actual path
+    transfer = False  # Set to True to only transfer DICOM attributes without conversion
+    zip = False
     
-#     # Run the function
-#     dcm2bids(data_directory, bids_output_dir, transfer, zip)
+    # Run the function
+    dcm2bids(data_directory, bids_output_dir, transfer, zip)
 
-# if __name__ == "__main__":
-#     main()
+if __name__ == "__main__":
+    main()
