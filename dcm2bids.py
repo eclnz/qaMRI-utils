@@ -95,6 +95,8 @@ def dcm2bids(data_directory: str, bids_output_dir: str, year: str, transfer: boo
                     continue
 
                 raw_path = metadata["dicom_path"]
+                
+                use_temp_dir = False
 
                 try:
                     # Standardize the scan name based on series description
@@ -109,6 +111,8 @@ def dcm2bids(data_directory: str, bids_output_dir: str, year: str, transfer: boo
                         # Split the ZIP path and internal file path
                         zip_path, internal_path = raw_path.split('.zip:')
                         zip_path += '.zip'  # Add back the ".zip" extension
+                        
+                        use_temp_dir = True
 
                         # Create a temporary directory for extraction
                         temp_dir = tempfile.mkdtemp()
@@ -134,8 +138,9 @@ def dcm2bids(data_directory: str, bids_output_dir: str, year: str, transfer: boo
 
                 finally:
                     # Clean up the temporary directory if it was created
-                    if temp_dir and os.path.exists(temp_dir):
-                        shutil.rmtree(temp_dir)
+                    if use_temp_dir:
+                        if os.path.exists(temp_dir):
+                            shutil.rmtree(temp_dir)
 
     create_bids_csv(bids_output_dir)
 
