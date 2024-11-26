@@ -43,6 +43,55 @@ def allocate_scan_to_group(scan_name: str) -> str:
     # Default category for unmatched scans
     return "other"
 
+def parse_study_description(study_description: str, patient_name: str):
+    """
+    Parses the StudyDescription to extract cohort, subject ID, and session ID.
+    Falls back to parsing patientName if StudyDescription appears incorrectly formatted.
+    
+    Args:
+        study_description (str): The StudyDescription header from DICOM metadata.
+        patient_name (str): The PatientName field, used as a fallback.
+    
+    Returns:
+        tuple: (cohort, subject_id, session_id)
+    """
+    def parse_parts(parts):
+        """Helper function to extract cohort, subject_id, and session from parts."""
+        cohort = None
+        subject_id = None
+        session = None
+        
+        for part in reversed(parts):
+            if part.isdigit() and subject_id is None:  # Subject ID is numeric
+                subject_id = int(part)
+            elif part.isupper() and len(part) == 1 and session is None:  # Session is a single uppercase letter
+                session = part
+            elif part.isalpha() and cohort is None:  # Cohort is alphabetic
+                cohort = part.lower()
+        
+        return cohort, subject_id, session
+
+    # Split the StudyDescription into parts
+    parts = study_description.split("_")
+    
+    # If parts length <= 3, fallback to parsing patientName
+    if len(parts) <= 3:
+        # print(f"Warning: StudyDescription '{study_description}' seems invalid, falling back to PatientName.")
+        parts = patient_name.split("_")
+    
+    # Parse parts for cohort, subject ID, and session
+    cohort, subject_id, session = parse_parts(parts)
+    
+    # Fill with default values if not found
+    cohort = cohort or "exp"  # Default cohort
+    session = session or "A"  # Default session
+    
+    # Validate subject ID is found
+    if subject_id is None:
+        raise ValueError(f"Subject ID not found in StudyDescription or PatientName: {study_description}, {patient_name}")
+    
+    return cohort, subject_id, session
+
 def dcm2bids(data_directory: str, bids_output_dir: str, year: str, transfer: bool = False, zip: bool = False):
     bids_raw_output_dir = os.path.join(bids_output_dir, 'raw')
     
@@ -86,6 +135,10 @@ def dcm2bids(data_directory: str, bids_output_dir: str, year: str, transfer: boo
             year = scans[next(iter(scans))]["date"] if scans else "unknown"
             session_name = f"ses-{year}{session_id}"
             print(f"  Processing Session: {session_name}")
+            
+            if len(scans.items()) ==0: 
+                display_error(f"No scans: {selected_series} found for {subject_name} {session_name}")
+                continue
 
             for scan, metadata in scans.items():
                 series_description = scan  # The scan key represents the series description
@@ -328,19 +381,14 @@ def list_non_bids_subjects_sessions_scans( # TODO: Could be better as a class.
             # Extract required fields
             dicom_info = {
                 "StudyDescription": getattr(dicom, "StudyDescription", ""),
+                "PatientName": getattr(dicom, "PatientName", ""),
                 "SeriesDescription": getattr(dicom, "SeriesDescription", "" ),
                 "AcquisitionDate": getattr(dicom, "AcquisitionDate", ""),
             }
 
             # Split Description into components
-            parts = dicom_info["StudyDescription"].split("_")
-            if len(parts) < 5:
-                display_warning(f"Invalid SeriesDescription format in {path_descriptor}: {dicom_info['StudyDescription']}")
-                return True
-
-            cohort = parts[2].lower()
-            subject_id = parts[-2]
-            session_id = parts[-1]
+            cohort, subject_id, session_id = parse_study_description(dicom_info["StudyDescription"], dicom_info['PatientName'].family_name) #type: ignore
+            
             scan = sanitize_string(dicom_info["SeriesDescription"])
 
             # Convert the string to a date object
@@ -586,7 +634,7 @@ def standardize_scan_name(series_description: str) -> str:
 
     # Catch-all for unsupported scans
     else:
-        return {series_description}
+        return series_description
 
 def process_scan(dcm_path: str, out_path: str, subject_name: str, session_name: str, scan_name: str, bids_output_dir: str, transfer: bool):
     """Processes each scan, converting DICOM to NIfTI and transferring metadata."""
