@@ -26,12 +26,23 @@ def dcm2bids(data_directory: str, bids_output_dir: str, year: str, transfer: boo
 
     # Build the series structure and get unique series descriptions
     unique_series = build_series_list(subjects_sessions_scans)
+    
+    if not unique_series:
+        if not zip:
+            # If no scans were found and not searching within zips, retry search with zip enabled
+            subjects_sessions_scans = list_non_bids_subjects_sessions_scans(data_directory, True)
+            unique_series = build_series_list(subjects_sessions_scans)
+        
+        # Check again after retrying with zip
+        if not unique_series:
+            display_error("No scans were found in the specified directory")
+            return None
 
     # Display dropdown menu to select series descriptions
     selected_series = display_dropdown_menu(unique_series, title_text="Select scans to add to BIDS")
     
     if len(selected_series) == 0:
-        display_error("No scans found or selected")
+        display_error("No scans selected")
         return None
 
     print("Selected series descriptions for processing:")
@@ -405,7 +416,13 @@ def list_non_bids_subjects_sessions_scans( # TODO: Could be better as a class.
     return subjects_sessions_scans
 
 def display_dropdown_menu(str_list: list[str], title_text: str):
-    """Display a dropdown menu to select multiple series descriptions using arrow keys, Space to select, and Enter to confirm."""
+    """
+    Display a dropdown menu to select multiple series descriptions using arrow keys, Space to select, and Enter to confirm.
+    """
+    if not str_list:
+        display_error("No options were provided")
+        return []  # Early exit if the input list is empty
+
     selected_index = 0
     selected_items:set = set()
 
@@ -471,6 +488,10 @@ def display_dropdown_menu(str_list: list[str], title_text: str):
                 else:
                     selected_items.add(selected_index)
             elif key == ord("\n"):  # Enter to confirm
+                if not selected_items:  # Handle case where no items are selected
+                    stdscr.addstr(height - 1, 0, "No items selected. Press Enter again to confirm, or Space to select.")
+                    stdscr.refresh()
+                    continue  # Let the user confirm or select items
                 return [str_list[i] for i in selected_items]  # Return the selected series descriptions
 
     selected_series = curses.wrapper(navigate_menu)
