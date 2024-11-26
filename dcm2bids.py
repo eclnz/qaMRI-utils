@@ -18,23 +18,26 @@ from helperFunctions import sanitize_string
 import io
 from collections import defaultdict
 
-def dcm2bids(data_directory: str, bids_output_dir: str, year: str, transfer: bool = False):
-    file_extension = '.dcm'
+def dcm2bids(data_directory: str, bids_output_dir: str, year: str, transfer: bool = False, zip: bool = False):
     bids_raw_output_dir = os.path.join(bids_output_dir, 'raw')
     
     # List all subjects, sessions, and scans containing the specified file type
-    subjects_sessions_scans = list_non_bids_subjects_sessions_scans(data_directory, file_extension)
+    subjects_sessions_scans = list_non_bids_subjects_sessions_scans(data_directory, zip)
 
     # Build the series structure and get unique series descriptions
     unique_series = build_series_list(subjects_sessions_scans)
 
     # Display dropdown menu to select series descriptions
     selected_series = display_dropdown_menu(unique_series, title_text="Select scans to add to BIDS")
+    
+    if len(selected_series) == 0:
+        display_error("No scans found or selected")
+        return None
 
     print("Selected series descriptions for processing:")
     for series in selected_series:
         print(f" - {series}")
-
+        
     # Process only scans that match the selected series descriptions
     for subject_id, sessions in subjects_sessions_scans.items():
         # Include cohort in subject name 
@@ -253,7 +256,7 @@ def is_valid_dicom(file_obj):
             return False
 
 def list_non_bids_subjects_sessions_scans( # TODO: Could be better as a class.
-    data_directory: str, file_extension: str = ".dcm"
+    data_directory: str, zip: bool
 ) -> DefaultDict[str, DefaultDict[str, DefaultDict[str, DefaultDict[str, str]]]]:
     """
     Recursively traverses directories to list files by subject, session, and scan.
@@ -360,18 +363,18 @@ def list_non_bids_subjects_sessions_scans( # TODO: Could be better as a class.
             print(f"Error processing ZIP file {zip_path}: {e}")
             return False
 
-    def process_file(entry):
+    def process_file(entry, zip):
         """
         Process a single file entry, either as a DICOM or a ZIP file.
         """
-        if entry.name.endswith('.zip'):
+        if entry.name.endswith('.zip') and zip:
             process_zip(entry.path)
             return False # Dont want to stop looking in folder containing zip because it may have other important things.
         if is_valid_dicom(entry.path):
             return process_dicom(entry.path, path_descriptor=entry.path)
         return False
 
-    def recursive_search(folder_path: str) -> bool:
+    def recursive_search(folder_path: str, zip: bool) -> bool:
         """
         Recursively searches for DICOM files in the directory and organizes them.
         """
@@ -383,11 +386,11 @@ def list_non_bids_subjects_sessions_scans( # TODO: Could be better as a class.
                         continue
 
                     if entry.is_dir():
-                        if recursive_search(entry.path):
+                        if recursive_search(entry.path, zip):
                             continue
 
                     elif entry.is_file():
-                        if process_file(entry):
+                        if process_file(entry, zip):
                             return True
 
         except Exception as e:
@@ -396,7 +399,7 @@ def list_non_bids_subjects_sessions_scans( # TODO: Could be better as a class.
         return False
 
     # Start recursive search from the root directory
-    recursive_search(data_directory)
+    recursive_search(data_directory, zip)
 
     # Convert defaultdict to standard dictionary for return
     return subjects_sessions_scans
@@ -827,26 +830,29 @@ def extract_fields(json_path: str, fields_to_extract: List[str], warn: bool = Tr
             display_warning(f'Missing field "{field}" in JSON file: {json_path}')
     return attributes
 
-if __name__ == "__main__":
+# if __name__ == "__main__":
     import argparse
 
     parser = argparse.ArgumentParser(description="Convert DICOM files to BIDS-compliant NIfTI format")
     parser.add_argument("data_directory", help="Path to the directory containing subject folders with DICOM files.")
     parser.add_argument("bids_output_dir", help="Path to the BIDS output directory.")
     parser.add_argument("--transfer", action="store_true", help="Only transfer DICOM attributes to .json sidecar without DICOM-to-NIfTI conversion.")
+    parser.add_argument("--zip", action="store_true", help="Enable searching through zip files in addition to folders.")
 
     args = parser.parse_args()
-    dcm2bids(args.data_directory, args.bids_output_dir, args.transfer)
 
-## For debugging purposes: Manually sets folder.
+    dcm2bids(args.data_directory, args.bids_output_dir, args.transfer, args.zip)
+
+# # For debugging purposes: Manually sets folder.
 # def main():
 #     # Manually specify the variables
 #     data_directory = "../qaMRI-clone/testData/raw_r"  # Replace with the actual path
 #     bids_output_dir = "../qaMRI-clone/testData/BIDS7"  # Replace with the actual path
 #     transfer = False  # Set to True to only transfer DICOM attributes without conversion
+#     zip = False
     
 #     # Run the function
-#     dcm2bids(data_directory, bids_output_dir, transfer)
+#     dcm2bids(data_directory, bids_output_dir, transfer, zip)
 
 # if __name__ == "__main__":
 #     main()
