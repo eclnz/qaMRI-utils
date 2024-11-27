@@ -320,18 +320,30 @@ def list_bids_subjects_sessions_scans(data_directory: str, file_extension: str) 
                 parent_session = entry.parent.name
                 parent_subject = entry.parent.parent.name
 
-                if not parent_subject.startswith("sub-") or not parent_session.startswith("ses-"):
-                    continue  # Ignore files not in valid subject/session directories
+                # Extract metadata with flexibility for folder structure
+                parent_session = entry.parent.parent.name if entry.parent.parent else "unknown"
+                parent_subject = entry.parent.parent.parent.name if entry.parent.parent and entry.parent.parent.parent else "unknown"
+
+                # Ensure the hierarchy is valid
+                if not parent_subject.startswith("sub-"):
+                    parent_subject = "unknown"  # Fallback for subject
+
+                if not parent_session.startswith("ses-"):
+                    parent_session = "unknown"  # Fallback for session
+
+                # Skip files that cannot be matched to a valid subject/session structure
+                if parent_subject == "unknown" or parent_session == "unknown":
+                    continue
 
                 # Extract scan description
                 parts = entry.name.split("_desc-")
                 if len(parts) > 1:
                     scan = parts[1]
                 else:
-                    scan = "unknown"
+                    scan = entry.name
 
                 # Populate the structure
-                subjects_sessions_scans[parent_subject][parent_session][scan]["scan_path"] = str(entry)
+                subjects_sessions_scans[parent_subject][parent_session][scan]["scan_path"] = os.path.join(path, entry.name)
 
     # Start recursive traversal
     recursive_traverse(Path(data_directory))
