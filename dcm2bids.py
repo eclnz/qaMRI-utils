@@ -195,7 +195,7 @@ def dcm2bids(data_directory: str, bids_output_dir: str, year: str, transfer: boo
                         if os.path.exists(temp_dir):
                             shutil.rmtree(temp_dir)
 
-    create_bids_csv(bids_output_dir)
+    setup_sheets(bids_output_dir)
 
 def ensure_binary(file_input: Union[str, bytes, BinaryIO, os.DirEntry]) -> BinaryIO:
     """
@@ -656,9 +656,18 @@ def process_scan(dcm_path: str, out_path: str, subject_name: str, session_name: 
     nifti_file = os.path.join(out_path, f"{subject_name}_{session_name}_{scan_name}.nii.gz")
     json_file = os.path.join(out_path, f"{subject_name}_{session_name}_{scan_name}.json")
 
-    # Check if the file exists
-    if os.path.isfile(nifti_file):
-        print(f"  {scan_name} already processed. Skipping...")
+        # Check if output files already exist, unless we’re only transferring metadata
+    if os.path.isfile(nifti_file) and os.path.isfile(json_file):
+        print(f"\tOutput for {subject_name}_{session_name}_{scan_name} already exists. Skipping...")
+        
+        # Transfer specified DICOM fields to the JSON sidecar
+        transfer_dicom_fields_to_json(dcm_path, json_file, subject_name, session_name, scan_name, ['StudyDescription', 'SeriesDescription', 'AcquisitionDate', 'PatientAge', 'PatientWeight', 'PatientSex'])
+
+        # For aMRI scans, transfer HeartRate to the JSON sidecar
+        if scan_name == 'aMRI':
+            transfer_dicom_fields_to_json(dcm_path, json_file, subject_name, session_name, scan_name, ['HeartRate'])
+
+        print(f"Output for {subject_name}_{session_name}_{scan_name} already exists. Skipping...")
         return
 
     # Skip processing if cardiac images are missing for aMRI scans
@@ -675,11 +684,6 @@ def process_scan(dcm_path: str, out_path: str, subject_name: str, session_name: 
         use_temp_dir = True
     else: 
         use_temp_dir = False
-
-    # Check if output files already exist, unless we’re only transferring metadata
-    if os.path.isfile(nifti_file) and os.path.isfile(json_file) and not transfer:
-        print(f"Output for {subject_name}_{session_name}_{scan_name} already exists. Skipping...")
-        return
     
     # Convert DICOM to NIfTI unless we're only transferring metadata
     if not transfer:
@@ -697,12 +701,12 @@ def process_scan(dcm_path: str, out_path: str, subject_name: str, session_name: 
         if not (os.path.isfile(nifti_file) or os.path.isfile(json_file)):
             raise RuntimeError(f"dcm2niix failed to create scan: {dcm_folder}\n{result.stderr}")
 
-    # Transfer specified DICOM fields to the JSON sidecar
-    transfer_dicom_fields_to_json(dcm_path, json_file, subject_name, session_name, scan_name, ['StudyDescription', 'SeriesDescription', 'AcquisitionDate', 'PatientAge', 'PatientWeight', 'PatientSex'])
+        # Transfer specified DICOM fields to the JSON sidecar
+        transfer_dicom_fields_to_json(dcm_path, json_file, subject_name, session_name, scan_name, ['StudyDescription', 'SeriesDescription', 'AcquisitionDate', 'PatientAge', 'PatientWeight', 'PatientSex'])
 
-        # For aMRI scans, transfer HeartRate to the JSON sidecar
-    if scan_name == 'aMRI':
-            transfer_dicom_fields_to_json(dcm_path, json_file, subject_name, session_name, scan_name, ['HeartRate'])
+            # For aMRI scans, transfer HeartRate to the JSON sidecar
+        if scan_name == 'aMRI':
+                transfer_dicom_fields_to_json(dcm_path, json_file, subject_name, session_name, scan_name, ['HeartRate'])
 
     # Remove temporary directory if used
     if use_temp_dir:
@@ -885,83 +889,143 @@ def display_error(message):
     RESET = "\033[0m"
     print(f"{RED}Error: {message}{RESET}")
 
-def create_bids_csv(bids_dir: str, 
-                    subjects_sessions_scans: Optional[Dict[str, Dict[str, Dict[str, List[str]]]]] = None, 
-                    file_extension: str = '.json', 
-                    bids: bool = True) -> None:
+def setup_sheets(bids_dir: str) -> None:
     """
-    Scans a BIDS directory or uses a precomputed dictionary, extracts specified fields from JSON sidecar files,
-    and writes the data to a CSV file.
+    Main function to generate participants TSV and JSON files for a BIDS dataset.
 
     Parameters:
     - bids_dir: str
         Path to the BIDS directory containing raw data and JSON sidecar files.
     - file_extension: str
-        The file extension to look for in each directory, typically '.json'.
-    - bids: bool
-        If True, assumes scan files are within the session folder directly.
+        File extension to look for when processing JSON sidecar files (default is '.json').
     """
-    # CSV path and name
-    csv_path = os.path.join(bids_dir, 'participants.csv')
+    create_participants_tsv(bids_dir)
+    create_participants_json(bids_dir)
 
-    # Check if BIDS directory exists
+
+def create_participants_tsv(bids_dir: str) -> None:
+    """
+    Creates a participants.tsv file with one row per subject-session, summarizing extracted fields.
+
+    Parameters:
+    - bids_dir: str
+        Path to the BIDS directory containing raw data and JSON sidecar files.
+    - file_extension: str
+        File extension to look for when processing JSON sidecar files (default is '.json').
+    """
+    # TSV path and name
+    tsv_path = os.path.join(bids_dir, 'participants.tsv')
+
+    # Ensure BIDS directory exists
     if not os.path.isdir(bids_dir):
         raise ValueError(f"The specified BIDS directory does not exist: {bids_dir}")
 
     # Fields to extract from JSON files
-    fields_to_extract = ['StudyDescription', 'SeriesDescription', 'HeartRate', 'AcquisitionDate', 
+    fields_to_extract = ['StudyDescription', 'HeartRate', 'AcquisitionDate', 
                          'AcquisitionTime', 'PatientAge', 'PatientWeight', 'PatientSex']
 
-    # Define the header for the CSV
-    csv_data = [['StudyDescription', 'SeriesDescription', 'Subject', 'Session', 'ScanType', 'Scan', 
-                 'AcquisitionDate', 'AcquisitionTime', 'PatientAge', 'PatientWeight', 'PatientSex', 'HeartRate']]
-    
-    # Define the path to the raw directory
-    raw_dir = os.path.join(bids_dir, 'raw')
+    # Define the header for the TSV
+    tsv_data = [['Subject', 'Session', 'StudyDescription', 
+                 'AcquisitionDate', 'AcquisitionTime', 'PatientAge', 
+                 'PatientWeight', 'PatientSex', 'HeartRate']]
 
-    # If subjects_sessions_scans is not provided, generate it
-    subjects_sessions_scans_bids = list_bids_subjects_sessions_scans(data_directory=raw_dir, file_extension=file_extension)
+    # Extract subject, session, and scan information
+    subjects_sessions_scans_bids = list_bids_subjects_sessions_scans(data_directory=bids_dir, file_extension='.json')
 
-    # Iterate over each subject, session, and scan in subjects_sessions_scans
+    # Dictionary to store consolidated data for each subject-session
+    consolidated_data = {}
+
+    # Iterate over subjects, sessions, and scans
     for subject_name, sessions in subjects_sessions_scans_bids.items():
         for session_name, scans in sessions.items():
+            # Initialize a dictionary for this subject-session
+            key = (subject_name, session_name)
+            if key not in consolidated_data:
+                consolidated_data[key] = {field: 'NA' for field in fields_to_extract}
+
             for scan_type, file_paths in scans.items():
-                for json_path in file_paths:
-                    # Only process JSON files
-                    if not json_path.endswith('.json'):
-                        continue
-
-                    # Extract scan name from the JSON file path
-                    scan_name = os.path.basename(json_path).replace('.json', '')
-
-                    # Try to extract fields and handle errors by filling with 'NA'
+                for json_path in file_paths.values():
                     try:
                         attributes = extract_fields(json_path, fields_to_extract, warn=False)
                     except ValueError as e:
                         print(f"Warning: {e}")
-                        continue  # Skip this file if there's an error
+                        continue
 
-                    # Append extracted data to csv_data
-                    csv_data.append([
-                        attributes.get('StudyDescription', 'NA'),
-                        attributes.get('SeriesDescription', 'NA'),
-                        subject_name, 
-                        session_name, 
-                        scan_type, 
-                        scan_name,
-                        attributes.get('AcquisitionDate', 'NA'),
-                        attributes.get('AcquisitionTime', 'NA'),
-                        attributes.get('PatientAge', 'NA'),
-                        attributes.get('PatientWeight', 'NA'),
-                        attributes.get('PatientSex', 'NA'),
-                        attributes.get('HeartRate', 'NA')
-                    ])
+                    # Update consolidated data for this subject-session
+                    for field in fields_to_extract:
+                        if attributes.get(field) and consolidated_data[key][field] == 'NA':
+                            consolidated_data[key][field] = attributes[field]
 
-    # Write the CSV data to a file
-    with open(csv_path, 'w', newline='') as f:
-        writer = csv.writer(f)
-        writer.writerows(csv_data)
-    print(f"CSV file saved to {csv_path}")
+    # Populate the TSV data from consolidated results
+    for (subject_name, session_name), attributes in consolidated_data.items():
+        tsv_data.append([
+            subject_name,
+            session_name,
+            attributes.get('StudyDescription', 'NA'),
+            attributes.get('AcquisitionDate', 'NA'),
+            attributes.get('AcquisitionTime', 'NA'),
+            attributes.get('PatientAge', 'NA'),
+            attributes.get('PatientWeight', 'NA'),
+            attributes.get('PatientSex', 'NA'),
+            attributes.get('HeartRate', 'NA')
+        ])
+
+    # Write to TSV
+    with open(tsv_path, 'w', newline='') as f:
+        writer = csv.writer(f, delimiter='\t')
+        writer.writerows(tsv_data)
+    print(f"TSV file saved to {tsv_path}")
+
+
+def create_participants_json(bids_dir: str) -> None:
+    """
+    Creates a participants.json file describing the levels of the participants.tsv file.
+
+    Parameters:
+    - bids_dir: str
+        Path to the BIDS directory containing the participants.tsv file.
+    """
+    # JSON path and name
+    json_path = os.path.join(bids_dir, 'participants.json')
+
+    # Description of TSV levels
+    json_data = {
+        "StudyDescription": {
+            "Description": "Description of the study from the imaging dataset"
+        },
+        "Subject": {
+            "Description": "Participant ID"
+        },
+        "Session": {
+            "Description": "Session ID"
+        },
+        "Scan": {
+            "Description": "Scan name extracted from the file name"
+        },
+        "AcquisitionDate": {
+            "Description": "Date of the acquisition"
+        },
+        "AcquisitionTime": {
+            "Description": "Time of the acquisition"
+        },
+        "PatientAge": {
+            "Description": "Age of the participant at the time of the scan"
+        },
+        "PatientWeight": {
+            "Description": "Weight of the participant in kilograms"
+        },
+        "PatientSex": {
+            "Description": "Sex of the participant"
+        },
+        "HeartRate": {
+            "Description": "Heart rate during the scan"
+        }
+    }
+
+    # Write JSON data to file
+    with open(json_path, 'w') as f:
+        json.dump(json_data, f, indent=4)
+    print(f"JSON file saved to {json_path}")
 
 def extract_fields(json_path: str, fields_to_extract: List[str], warn: bool = True) -> Dict[str, str]:
     """
