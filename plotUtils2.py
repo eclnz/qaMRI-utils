@@ -10,8 +10,7 @@ from numpy.typing import NDArray
 from typing import Optional, Tuple, List, Dict
 from processingUtils import reorient_from_fsl, crop_to_nonzero, apply_crop_bounds
 from dcm2bids import display_dropdown_menu, list_bids_subjects_sessions_scans, build_series_list
-import warnings
-import nibabel as nib
+from userInteraction import prompt_user
 
 plt.switch_backend("Agg")  # For non-GUI environments
 
@@ -518,13 +517,13 @@ class GroupPlotter:
         """
         print(f"\nConfiguring options for scan: {scan}")
         return {
-            "crop": self._prompt_toggle("Crop", False),
-            "padding": self._prompt_value("Padding", 0, int),
-            "fps": self._prompt_value("FPS", 10, int),
-            "reorient": self._prompt_toggle("Reorient", True),
-            "mask": self._select_scan("Select a scan to use as the mask (optional)"),
-            "underlay_image": self._select_scan("Select a scan to use as the underlay image (optional)"),
-            "mask_underlay": self._prompt_toggle("Mask underlay", False),
+            "padding": prompt_user("Enter padding:", default="0", parse_type=int),
+            "fps": prompt_user("Enter FPS:", default="10", parse_type=int),
+            "reorient": prompt_user("Reorient data?:", default="y", parse_type=bool),
+            "mask": self._select_scan("Select a scan to use as the mask (optional):"),
+            "crop": prompt_user("Crop to mask?:", default="n", parse_type=bool),
+            "underlay_image": self._select_scan("Select a scan to use as the underlay image (optional):"),
+            "mask_underlay": prompt_user("Mask underlay?:", default="n", parse_type=bool),
         }
         
     def _find_scan_path(self, subject: str, session: str, scan_name: str) -> Optional[str]:
