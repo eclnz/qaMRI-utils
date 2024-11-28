@@ -19,12 +19,6 @@ from userInteraction import prompt_user
 
 plt.switch_backend("Agg")  # For non-GUI environments
 
-plane_to_axis = {
-    'sagittal': 0,  # Corresponds to slicing along the X-axis
-    'coronal': 1,   # Corresponds to slicing along the Y-axis
-    'axial': 2      # Corresponds to slicing along the Z-axis
-}
-
 @dataclass
 class PlotConfig:
     """Configuration for individual MRI plotting."""
@@ -169,36 +163,48 @@ class MRIPlotter:
 
         return fig_width, fig_height
         
-    def plot_three_planes(
-        self, 
-        volume: np.ndarray, 
-        title_prefix: str = "",              
-        intensity_bounds: Optional[Tuple[float, float]] = None
-        ) -> Dict[str, np.ndarray]:
+    def extract_three_plane_slices(self, volume: np.ndarray) -> Dict[str, np.ndarray]:
         """
-        Generates images for three orthogonal planes (axial, coronal, sagittal) from a 3D MRI volume.
+        Extracts mid-slices for three orthogonal planes (axial, coronal, sagittal) from a 3D volume.
 
         Parameters:
         - volume: 3D NumPy array representing MRI data.
-        - title_prefix: Optional title prefix for the three planes.
-        - intensity_bounds: Tuple specifying (min, max) intensity bounds for consistent scaling.
 
         Returns:
-        - Dict[str, np.ndarray]: A dictionary with keys as plane names ('axial', 'coronal', 'sagittal') and values as images.
+        - Dict[str, np.ndarray]: A dictionary with keys as plane names and values as extracted slices.
         """
         # Determine mid-slices along each axis
         mid_slices = [dim // 2 for dim in volume.shape]
 
         # Extract the three orthogonal planes
         planes = {
-            "axial": volume[mid_slices[0], :, :],
+            "axial": volume[mid_slices[0], :, :], # Remember the dims are no longer x y z because of the reorientation for presentation. It is now z y x 
             "coronal": volume[:, mid_slices[1], :],
             "sagittal": volume[:, :, mid_slices[2]]
         }
 
+        return planes
+    
+    def add_titles_and_generate_images(
+            self, 
+            slices: Dict[str, np.ndarray], 
+            title_prefix: str = "", 
+            intensity_bounds: Optional[Tuple[float, float]] = None
+        ) -> Dict[str, np.ndarray]:
+        """
+        Adds titles and generates images for the provided slices.
+
+        Parameters:
+        - slices: Dictionary of plane slices with keys as plane names and values as slice data.
+        - title_prefix: Optional title prefix for the slices.
+        - intensity_bounds: Tuple specifying (min, max) intensity bounds for consistent scaling.
+
+        Returns:
+        - Dict[str, np.ndarray]: A dictionary with keys as plane names and values as images.
+        """
         returned_images = {}
 
-        for plane_name, slice_data in planes.items():
+        for plane_name, slice_data in slices.items():
             # Use the class method to calculate figure size
             fig_width, fig_height = self.calculate_compatible_figure_size(slice_data)
 
@@ -212,8 +218,6 @@ class MRIPlotter:
 
             # Render the figure to an image array
             fig.canvas.draw()
-            
-            extract_image_from_canvas
             image_array = extract_image_from_canvas(fig)
             returned_images[plane_name] = image_array
 
@@ -227,7 +231,8 @@ class MRIPlotter:
         Generates images for three orthogonal planes from 3D MRI data and saves them.
         """
         # Generate images for the three planes
-        plane_images = self.plot_three_planes(self.mri_data, title_prefix=self.scan_name, intensity_bounds=self.intensity_bounds)
+        plane_slices = self.extract_three_plane_slices(self.mri_data)
+        plane_images = self.add_titles_and_generate_images(plane_slices,title_prefix=self.scan_name, intensity_bounds=self.intensity_bounds)
 
         # Save the generated images
         for plane, image in plane_images.items():
@@ -247,7 +252,9 @@ class MRIPlotter:
         # Iterate over timepoints
         for t in range(self.mri_data.shape[-1]):
             # Generate images for the three planes at the current timepoint
-            plane_images = self.plot_three_planes(self.mri_data[..., t], title_prefix=f"{self.scan_name}_Time{t}", intensity_bounds=self.intensity_bounds)
+            plane_slices = self.extract_three_plane_slices(self.mri_data[..., t])
+            plane_images = self.add_titles_and_generate_images(plane_slices,title_prefix=f"{self.scan_name} Time: {t}", 
+                                                               intensity_bounds=self.intensity_bounds)
 
             # Add frames to the respective video writers
             for plane, image in plane_images.items():
@@ -267,7 +274,13 @@ class MRIPlotter:
             
             # Calculate the underlay image slices if it exists
             if self.underlay_image is not None:
-                underlay_plane_images = self.plot_three_planes(self.underlay_image, title_prefix=self.scan_name)
+                underlay_plane_images = self.extract_three_plane_slices(self.underlay_image)
+            
+            plane_to_axis = {
+                'axial': 0,      # Corresponds to slicing along the Z-axis
+                'coronal': 1,   # Corresponds to slicing along the Y-axis
+                'sagittal': 2,  # Corresponds to slicing along the X-axis
+            }
             
             for plane, axis in plane_to_axis.items():
                 
