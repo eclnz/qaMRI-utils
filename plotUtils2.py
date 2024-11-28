@@ -9,7 +9,7 @@ import os
 from numpy.typing import NDArray
 from typing import Optional, Tuple, List, Dict
 from processingUtils import reorient_from_fsl, crop_to_nonzero, apply_crop_bounds
-from dcm2bids import display_dropdown_menu, list_bids_subjects_sessions_scans
+from dcm2bids import display_dropdown_menu, list_bids_subjects_sessions_scans, build_series_list
 import warnings
 import nibabel as nib
 
@@ -400,7 +400,19 @@ def plot_three_planes(volume: np.ndarray, mode: str = "display", title_prefix: s
             plt.close(fig)
         elif mode == "return":
             fig.canvas.draw()
-            img_array = np.frombuffer(fig.canvas.tostring_rgb(), dtype=np.uint8) #type:ignore
+            
+            # Get the actual size of the canvas
+            width, height = fig.canvas.get_width_height()
+
+            # Extract RGBA data from the canvas buffer
+            buffer = np.frombuffer(fig.canvas.buffer_rgba(), dtype=np.uint8) #type:ignore
+
+            # Reshape the buffer using dynamically determined width and height
+            img_array = buffer.reshape((height, width, 4))  # Shape is (height, width, 4) for RGBA
+
+            # If you need RGB, discard the alpha channel
+            img_array = img_array[:, :, :3]
+    
             img_array = img_array.reshape(fig.canvas.get_width_height()[::-1] + (3,))
             returned_images[plane_name] = img_array
             plt.close(fig)
@@ -455,147 +467,223 @@ def find_unique_scans_in_bids(bids_folder: str, file_extension: str = ".nii.gz")
     Returns:
         List[str]: A sorted list of unique scan descriptions found in the BIDS folder.
     """
-    unique_scans = set()
 
     if not os.path.isdir(bids_folder):
         raise ValueError(f"BIDS folder '{bids_folder}' does not exist or is not a directory.")
-
-    # Recursively traverse the BIDS folder
-    for root, _, files in os.walk(bids_folder):
-        for file in files:
-            if file.endswith(file_extension):
-                # Extract the part of the filename after `desc-`
-                parts = file.split("_desc-")
-                if len(parts) > 1:
-                    desc_part = parts[1]  # Get the text after `desc-` and before the next `_`
-                    unique_scans.add(desc_part)
-
-    return sorted(unique_scans)
+    
+    subject_session = list_bids_subjects_sessions_scans(bids_folder, file_extension='.nii.gz', raw=False)
+    
+    unique_scans = build_series_list(subject_session)
+    
+    return unique_scans
 
 class GroupPlotter:
     """
-    Handles plotting for multiple MRI scans with user-defined options for each scan.
+    Handles plotting for multiple MRI scans with user-configured scan-specific options.
     """
 
-    def __init__(self, subject_session_list: Dict, all_scans: List[str], selected_scans: List[str]):
+    def __init__(self, bids_dir, subject_session_list: dict[str, dict[str, dict[str, dict[str, str]]]], all_scans: List[str], selected_scans: List[str]):
         """
         Initializes the GroupPlotter.
 
         Args:
-            subject_session_list (Dict): A dictionary containing subjects, sessions, and scans.
-            selected_scans (List[str]): A list of selected scans to plot.
+            subject_session_list (Dict): Dictionary of subjects, sessions, and scans.
+            all_scans (List[str]): List of all available scans.
+            selected_scans (List[str]): List of selected scans for plotting.
         """
-        self.subject_session_list = subject_session_list
+        self.bids_dir = bids_dir
+        self.subject_session_list: dict[str, dict[str, dict[str, dict[str, str]]]] = subject_session_list
         self.all_scans = all_scans
         self.selected_scans = selected_scans
-        self.scan_options = {}
+        self.scan_options = self._initialize_scan_options()
 
-    def collect_scan_options(self, scan: str):
+    def _initialize_scan_options(self) -> Dict[str, Dict]:
         """
-        Collect user-defined plotting options for a single scan.
+        Initializes scan options by prompting the user to configure settings for each scan.
+        """
+        options = {}
+        for scan in self.selected_scans:
+            options[scan] = self._configure_scan_options(scan)
+        return options
+
+    def _configure_scan_options(self, scan: str) -> Dict:
+        """
+        Prompts the user to configure options for a scan.
 
         Args:
-            scan (str): The name of the scan for which to gather options.
+            scan (str): Scan to configure.
 
         Returns:
-            Dict: A dictionary containing the user-specified options for the scan.
+            Dict: Configured options for the scan.
         """
         print(f"\nConfiguring options for scan: {scan}")
-
-        # Prompt for underlay image using the dropdown menu
-        underlay_image = display_dropdown_menu(
-            self.all_scans,
-            title_text=f"Select underlay image for scan {scan} (leave blank to skip)"
-        )
-        underlay_image = underlay_image[0] if underlay_image else None
-
-        # Prompt for mask using the dropdown menu
-        mask = display_dropdown_menu(
-            self.all_scans,
-            title_text=f"Select mask for scan {scan} (leave blank to skip)"
-        )
-        mask = mask[0] if mask else None
-
-        # Collect other options
-        crop = input("Enable cropping? (y/n, default=n): ").strip().lower() or "n" == "y"
-        padding = int(input("Padding (default 10): ").strip() or 10)
-        fps = int(input("Frames per second for video (default 10): ").strip() or 10)
-        reorient = input("Reorient data? (y/n, default=n): ").strip().lower() or "n" == "y"
-        mask_underlay = input("Mask underlay image? (y/n, default=n): ").strip().lower() or "n" == "y"
-
         return {
-            "underlay_image": underlay_image,
-            "mask": mask,
-            "crop": crop,
-            "padding": padding,
-            "fps": fps,
-            "reorient": reorient,
-            "mask_underlay": mask_underlay,
+            "crop": self._prompt_toggle("Crop", False),
+            "padding": self._prompt_value("Padding", 0, int),
+            "fps": self._prompt_value("FPS", 10, int),
+            "reorient": self._prompt_toggle("Reorient", True),
+            "mask": self._select_scan("Select a scan to use as the mask (optional)"),
+            "underlay_image": self._select_scan("Select a scan to use as the underlay image (optional)"),
+            "mask_underlay": self._prompt_toggle("Mask underlay", False),
         }
+        
+    def _find_scan_path(self, subject: str, session: str, scan_name: str) -> Optional[str]:
+        """
+        Finds the path to a scan (e.g., mask or underlay) within the subject-session structure.
 
-    def collect_options(self):
+        Args:
+            subject (str): Subject ID.
+            session (str): Session ID.
+            scan_name (str): Name of the scan to locate.
+
+        Returns:
+            Optional[str]: The path to the scan if found, otherwise None.
         """
-        High-level function to loop through selected scans and collect options for each.
+        session_data = self.subject_session_list.get(subject, {}).get(session, {})
+        for scan, scan_metadata in session_data.items():
+            if scan_name in scan:
+                return scan_metadata["scan_path"]
+        return None
+
+    def _select_scan(self, prompt: str) -> Optional[str]:
         """
-        for scan in self.selected_scans:
-            # Call the per-scan option collection method
-            self.scan_options[scan] = self.collect_scan_options(scan)
+        Prompts the user to select a scan.
+
+        Args:
+            prompt (str): Prompt message.
+
+        Returns:
+            Optional[str]: Selected scan or None.
+        """
+        print("Available scans:")
+        for idx, scan in enumerate(self.all_scans, 1):
+            print(f"{idx}: {scan}")
+        while True:
+            choice = input(f"{prompt} (enter number or leave blank for none): ").strip()
+            if not choice:
+                return None
+            try:
+                index = int(choice) - 1
+                if 0 <= index < len(self.all_scans):
+                    return self.all_scans[index]
+                print("Invalid selection. Try again.")
+            except ValueError:
+                print("Invalid input. Enter a number.")
+
+    def _prompt_toggle(self, name: str, default: bool) -> bool:
+        """
+        Prompts the user to toggle a boolean option.
+
+        Args:
+            name (str): Option name.
+            default (bool): Default value.
+
+        Returns:
+            bool: Updated value.
+        """
+        while True:
+            response = input(f"{name} (current: {default}, y/n): ").strip().lower()
+            if response in ["y", "n", ""]:
+                return default if response == "" else response == "y"
+            print("Invalid input. Enter 'y' or 'n'.")
+
+    def _prompt_value(self, name: str, default: int, value_type: type) -> int:
+        """
+        Prompts the user to enter a value.
+
+        Args:
+            name (str): Option name.
+            default (int): Default value.
+            value_type (type): Expected value type.
+
+        Returns:
+            int: Updated value.
+        """
+        while True:
+            response = input(f"{name} (current: {default}): ").strip()
+            if not response:
+                return default
+            try:
+                return value_type(response)
+            except ValueError:
+                print(f"Invalid input. Enter a valid {value_type.__name__}.")
 
     def plot(self, output_dir: str):
         """
-        Plot each selected scan using the user-defined options.
+        Plots the selected scans using configured options.
 
         Args:
-            output_dir (str): Directory to save the plotted outputs.
+            output_dir (str): Directory to save plots.
         """
         os.makedirs(output_dir, exist_ok=True)
-
         for subject, sessions in self.subject_session_list.items():
             for session, scans in sessions.items():
                 for scan, metadata in scans.items():
                     if scan not in self.selected_scans:
-                        continue  # Skip scans not selected for plotting
+                        continue
+                    self._plot_scan(scan, metadata, subject, session, output_dir, scans)
 
-                    print(f"\nPlotting scan: {scan} (Subject: {subject}, Session: {session})")
-                    options = self.scan_options[scan]
+    def _plot_scan(self, scan: str, metadata: Dict, subject: str, session: str, output_dir: str, scans: dict[str, dict[str, str]]):
+        """
+        Plots a single scan.
 
-                    # Load data and optional images
-                    mri_data = nib.load(metadata["scan_path"]) 
-                    mri_data: NDArray = mri_data.get_fdata() # type: ignore
-                    underlay_image = np.load(options["underlay_image"]) if options["underlay_image"] else None
-                    mask = np.load(options["mask"]) if options["mask"] else None
+        Args:
+            scan (str): Scan name.
+            metadata (Dict): Metadata for the scan.
+            subject (str): Subject ID.
+            session (str): Session ID.
+            output_dir (str): Directory to save the output.
+        """
+        try:
+            # Construct the BIDS-compliant paths for underlay_image and mask
+            options = self.scan_options[scan]
+            
+            # Recover paths for the underlay image and mask from the subject-session structure
+            underlay_image_path = None
+            if options["underlay_image"]:
+                underlay_image_path = self._find_scan_path(
+                    subject, session, options["underlay_image"]
+                )
+            
+            mask_image_path = None
+            if options["mask"]:
+                mask_image_path = self._find_scan_path(subject, session, options["mask"])
 
-                    # Initialize and configure the plotter
-                    plotter = GeneralMRIPlotter(
-                        mri_data=mri_data,
-                        output_dir=os.path.join(output_dir, f"{subject}_{session}"),
-                        underlay_image=underlay_image,
-                        mask=mask,
-                        crop=options["crop"],
-                        padding=options["padding"],
-                        fps=options["fps"],
-                        reorient=options["reorient"],
-                        mask_underlay=options["mask_underlay"]
-                    )
-                    plotter.plot()
 
+            # Load the data with appropriate handling
+            underlay_image = nib.load(underlay_image_path).get_fdata() if underlay_image_path else None  # type: ignore
+            mask_image = nib.load(mask_image_path).get_fdata() if mask_image_path else None  # type: ignore
+
+            # Load the MRI data
+            mri_data = nib.load(metadata["scan_path"]).get_fdata()
+
+            # Initialize the plotter
+            plotter = GeneralMRIPlotter(
+                mri_data=mri_data,
+                output_dir=os.path.join(output_dir, subject, session),
+                underlay_image=underlay_image,
+                mask=mask_image,
+                crop=options["crop"],
+                padding=options["padding"],
+                fps=options["fps"],
+                reorient=options["reorient"],
+                mask_underlay=options["mask_underlay"],
+            )
+
+            # Plot the MRI scan
+            plotter.plot()
+        except Exception as e:
+            print(f"Error plotting {scan}: {e}")
+            
 # Example usage
 if __name__ == "__main__":
-    subject_session_list = list_bids_subjects_sessions_scans('../qaMRI-clone/testData/BIDS4', file_extension='.nii.gz')
+    bids_dir = '../qaMRI-clone/testData/BIDS4'
+    subject_session_list = list_bids_subjects_sessions_scans(bids_dir, file_extension='.nii.gz', raw = False)
     scans = find_unique_scans_in_bids('../qaMRI-clone/testData/BIDS4')
     selected_scans = display_dropdown_menu(scans, title_text="Select MRI images to plot")
 
-    plotter = GroupPlotter(subject_session_list, scans, selected_scans)
-    plotter.collect_options()
-    plotter.plot(output_dir="../qaMRI-clone/testData/outputs")
+    plotter = GroupPlotter(bids_dir, subject_session_list, scans, selected_scans)
 
-
-
-subject_session_list = list_bids_subjects_sessions_scans('../qaMRI-clone/testData/BIDS4', file_extension='.nii.gz')
-scans = find_unique_scans_in_bids('../qaMRI-clone/testData/BIDS4')
-selected_scans = display_dropdown_menu(scans, title_text="Select MRI images to plot")
-
-print(scans)
-
-for scan in scans:
-    print(scan)
+    output_directory= 'output'
+    # Plot the selected scans
+    plotter.plot(output_dir=output_directory)
