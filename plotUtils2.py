@@ -31,6 +31,7 @@ class PlotConfig:
     underlay_image: Optional[str] = None  # Path or name of the underlay image
     dpi: int = 100
     scale_factor: int = 6
+    max_fig_size = 1500
 
 class MRIDataProcessor:
     """Handles preprocessing of MRI data, underlay images, and masks."""
@@ -60,7 +61,7 @@ class MRIDataProcessor:
                 # Apply the mask to zero out spatial dimensions
                 self.mri_data = self.mri_data * expanded_mask
                 
-            if self.config.mask_underlay is True:
+            if self.config.mask_underlay is True and self.underlay_image is not None:
                 # Expand the mask to match the dimensions of the underlay image
                 expanded_mask = self.mask
                 while expanded_mask.ndim < self.underlay_image.ndim:
@@ -134,24 +135,22 @@ class MRIPlotter:
             raise ValueError("Unsupported data dimensions. Only 3D, 4D, and 5D data are supported.")
         
     def calculate_compatible_figure_size(self, slice_array: np.ndarray) -> Tuple[float, float]:
-        """
-        Calculates figure width and height for plotting, scaled from MRI slice dimensions, and ensures dimensions
-        are compatible with video encoding by rounding to the nearest multiple of a macro block size.
-
-        Parameters:
-        - slice_array: np.ndarray representing the MRI slice, with shape (height, width).
-
-        Returns:
-        - Tuple[float, float]: Compatible (fig_width, fig_height) in inches.
-        """
         if slice_array.ndim != 2:
             raise ValueError(f"Expected a 2D array for slice dimensions, but got {slice_array.ndim}D array.")
+        
+        max_size = self.config.max_fig_size
 
         slice_height, slice_width = slice_array.shape
-        scale_factor = self.config.scale_factor
         macro_block_size = 16  # Default macro block size for compatibility
-        fig_width_px = slice_width * scale_factor
-        fig_height_px = slice_height * scale_factor
+
+        # Calculate the raw pixel dimensions
+        fig_width_px = slice_width * self.config.scale_factor
+        fig_height_px = slice_height * self.config.scale_factor
+
+        # Scale dimensions to ensure the maximum size is adhered to
+        scale_ratio = min(max_size / fig_width_px, max_size / fig_height_px)
+        fig_width_px *= scale_ratio #type:ignore
+        fig_height_px *= scale_ratio #type:ignore
 
         # Ensure dimensions are compatible with video encoding by rounding up to the nearest macro_block_size
         fig_width_px = int(np.ceil(fig_width_px / macro_block_size) * macro_block_size)
@@ -296,8 +295,11 @@ class MRIPlotter:
                 elif plane == 'axial':
                     disp1 = self.mri_data[:, :, index, 0, t]  # X-component
                     disp2 = self.mri_data[:, :, index, 1, t]  # Y-component    
-                    
-                underlay_image = underlay_plane_images[plane]
+                
+                if self.underlay_image is not None:    
+                    underlay_image = underlay_plane_images[plane]
+                else:
+                    underlay_image = None
 
                 # Generate the displacement vector frame
                 frame = self._plot_displacement_vectors(disp1, disp2, plane, t, underlay_image)
@@ -336,8 +338,6 @@ class MRIPlotter:
         
         # Calculate figure dimensions based on slice size and scale by downsampling factor
         fig_width, fig_height = self.calculate_compatible_figure_size(disp1_down)
-        fig_width *= downsample_factor
-        fig_height *= downsample_factor
 
         # Set up the figure
         fig, ax = plt.subplots(figsize=(fig_width, fig_height), dpi=self.config.dpi)
