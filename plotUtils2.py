@@ -35,13 +35,16 @@ class PlotConfig:
     mask_underlay: bool = False
     mask: Optional[str] = None  # Path or name of the mask image
     underlay_image: Optional[str] = None  # Path or name of the underlay image
-    dpi: int = 200
+    dpi: int = 100
     scale_factor: int = 6
 
 class MRIDataProcessor:
     """Handles preprocessing of MRI data, underlay images, and masks."""
-    def __init__(self, mri_data: NDArray, config: PlotConfig, 
-                 underlay_image: Optional[NDArray] = None, mask: Optional[NDArray] = None):
+    def __init__(self, 
+                 mri_data: NDArray, 
+                 config: PlotConfig, 
+                 underlay_image: Optional[NDArray] = None, 
+                 mask: Optional[NDArray] = None):
         self.mri_data = mri_data
         self.underlay_image = underlay_image
         self.mask = mask
@@ -55,7 +58,31 @@ class MRIDataProcessor:
         if self.mask is not None:
             self._crop_image()
             if self.config.crop is True:
-                self.mri_data = self.mri_data * self.mask
+                # Expand the mask to match the dimensions of self.mri_data
+                expanded_mask = self.mask
+                while expanded_mask.ndim < self.mri_data.ndim:
+                    expanded_mask = expanded_mask[..., np.newaxis]
+
+                # Apply the mask to zero out spatial dimensions
+                self.mri_data = self.mri_data * expanded_mask
+                
+            if self.config.mask_underlay is True:
+                # Expand the mask to match the dimensions of the underlay image
+                expanded_mask = self.mask
+                while expanded_mask.ndim < self.underlay_image.ndim:
+                    expanded_mask = expanded_mask[..., np.newaxis]
+
+                # Apply the expanded mask to the underlay image
+                self.underlay_image = self.underlay_image * expanded_mask
+
+                if self.underlay_image.ndim == 4:
+                    # Retain only the first slice along the 4th dimension
+                    self.underlay_image = self.underlay_image[:, :, :, 0]
+                elif self.underlay_image.ndim == 3:
+                    # No changes needed for 3D images
+                    pass
+                else:
+                    raise ValueError(f"Expected 3D or 4D image, but got {self.underlay_image.ndim}D.")
             
         if self.config.reorient:
             self.mri_data = reorient_from_fsl(self.mri_data)
@@ -237,6 +264,11 @@ class MRIPlotter:
         }
         
         for t in range(self.mri_data.shape[-1]):  # Iterate over timepoints
+            
+            # Calculate the underlay image slices if it exists
+            if self.underlay_image is not None:
+                underlay_plane_images = self.plot_three_planes(self.underlay_image, title_prefix=self.scan_name)
+            
             for plane, axis in plane_to_axis.items():
                 
                 index = self.mri_data.shape[axis] // 2  # Take the midpoint slice along the axis
@@ -250,10 +282,12 @@ class MRIPlotter:
                     disp2 = self.mri_data[:, index, :, 2, t]  # Z-component
                 elif plane == 'axial':
                     disp1 = self.mri_data[:, :, index, 0, t]  # X-component
-                    disp2 = self.mri_data[:, :, index, 1, t]  # Y-component
+                    disp2 = self.mri_data[:, :, index, 1, t]  # Y-component    
+                    
+                underlay_image = underlay_plane_images[plane]
 
                 # Generate the displacement vector frame
-                frame = self._plot_displacement_vectors(disp1, disp2, plane, t)
+                frame = self._plot_displacement_vectors(disp1, disp2, plane, t, underlay_image)
                 
                 # Write the frame to the video writer
                 video_writers[plane].append_data(frame)
@@ -261,7 +295,7 @@ class MRIPlotter:
         for writer in video_writers.values():
             writer.close()
 
-    def _plot_displacement_vectors(self, disp1: NDArray, disp2: NDArray, plane: str, timepoint: int) -> NDArray:
+    def _plot_displacement_vectors(self, disp1: NDArray, disp2: NDArray, plane: str, timepoint: int, underlay_image: Optional[NDArray] = None) -> NDArray:
         """
         Plots displacement vectors on a given plane slice at a specific timepoint, with downsampling and color normalization.
 
@@ -274,14 +308,10 @@ class MRIPlotter:
         Returns:
             NDArray: Generated frame as a numpy array (RGB image).
         """
-        # Calculate figure dimensions based on slice size
-        fig_width, fig_height = self.calculate_compatible_figure_size(disp1)
-
-        # Set up the figure
-        fig, ax = plt.subplots(figsize=(fig_width, fig_height), dpi=self.config.dpi)
+        # Downsample factor for the grid and displacement
+        downsample_factor = 5
 
         # Downsample displacement fields and grid
-        downsample_factor = 5
         X, Y = np.meshgrid(np.arange(disp1.shape[1]), np.arange(disp1.shape[0]))
         X_down = X[::downsample_factor, ::downsample_factor]
         Y_down = Y[::downsample_factor, ::downsample_factor]
@@ -290,6 +320,14 @@ class MRIPlotter:
 
         # Flip the Y-axis for consistent orientation
         Y_down = Y_down[::-1, :]
+        
+        # Calculate figure dimensions based on slice size and scale by downsampling factor
+        fig_width, fig_height = self.calculate_compatible_figure_size(disp1_down)
+        fig_width *= downsample_factor
+        fig_height *= downsample_factor
+
+        # Set up the figure
+        fig, ax = plt.subplots(figsize=(fig_width, fig_height), dpi=self.config.dpi)
 
         # Compute vector magnitudes for color normalization
         magnitudes = np.sqrt(disp1_down**2 + disp2_down**2)
@@ -309,6 +347,19 @@ class MRIPlotter:
         arrow_thickness = 0.003
         disp1_down_scaled = disp1_down * scale_factor
         disp2_down_scaled = disp2_down * scale_factor
+        
+        # Plot the underlay if provided
+        if underlay_image is not None:
+            # Normalize the underlay to [0, 1] and convert to grayscale
+            underlay_image = (underlay_image - underlay_image.min()) / (underlay_image.max() - underlay_image.min())
+        
+        if underlay_image is not None:
+            ax.imshow(
+                underlay_image,
+                cmap="gray",
+                interpolation="nearest",
+                extent=(0.0, float(disp1.shape[1]), 0.0, float(disp1.shape[0]))
+            )
 
         # Plot the vector field
         Q = ax.quiver(
