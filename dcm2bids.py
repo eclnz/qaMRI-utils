@@ -183,7 +183,7 @@ def dcm2bids(data_directory: str, bids_output_dir: str, year: str, transfer: boo
                     
                     process_scan(
                         raw_path, out_path, subject_name, session_name,
-                        standardized_scan_name, bids_raw_output_dir, transfer
+                        standardized_scan_name, transfer
                     )
                     
                 except Exception as e:
@@ -648,7 +648,7 @@ def standardize_scan_name(series_description: str) -> str:
     else:
         return series_description
 
-def process_scan(dcm_path: str, out_path: str, subject_name: str, session_name: str, scan_name: str, bids_output_dir: str, transfer: bool):
+def process_scan(dcm_path: str, out_path: str, subject_name: str, session_name: str, scan_name: str, transfer: bool):
     """Processes each scan, converting DICOM to NIfTI and transferring metadata."""
     os.makedirs(out_path, exist_ok=True)
     dcm_folder = os.path.dirname(dcm_path)
@@ -676,7 +676,7 @@ def process_scan(dcm_path: str, out_path: str, subject_name: str, session_name: 
         return
 
     # Check for incorrect slice thickness and use a temporary directory if needed
-    if scan_name == 'aMRI' and not check_slice_thickness(dcm_path):
+    if scan_name == 'aMRI' and check_slice_thickness(dcm_path):
         use_temp_dir = True
         display_warning(f"    Incorrect slice thickness detected for {subject_name}_{session_name}_{scan_name}. Adjusting in temporary folder.")
         dcm_folder = set_slice_thickness_temp(dcm_folder)
