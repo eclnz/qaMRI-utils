@@ -19,13 +19,19 @@ cd repo
 python3 -m venv venv
 ```
 
-3. Activate virtual env:
+3. Install library requirements:
+
+```bash
+pip install -r requirements.txt
+```
+
+4. Activate virtual env:
 
 ```bash 
 source venv/bin/activate # mac
 ```
 
-4. Call functionality from the command line
+5. Call functionality from the command line
 ```bash
 python3 dcm2bids raw_data_dir bids_dir
 ```
