@@ -9,8 +9,8 @@
 1. Clone the repository:
 
 ```bash
-git clone __
-cd repo
+git clone https://github.com/eclnz/qaMRI-utils.git
+cd repo qaMRI-utils
 ```
 
 2. Create virtual env:
@@ -32,6 +32,7 @@ pip install -r requirements.txt
 ```
 
 5. Call functionality from the command line
+
 ```bash
-python3 dcm2bids raw_data_dir bids_dir
+python3 dcm2bids.py raw_data_dir bids_dir
 ```
