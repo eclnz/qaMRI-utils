@@ -1,115 +1,75 @@
 import numpy as np
 import matplotlib.pyplot as plt
-from matplotlib.colors import Normalize
-from matplotlib.cm import ScalarMappable
-from collections import defaultdict
-from skimage.color import gray2rgb
-from skimage.measure import block_reduce
 import imageio
 import os
-from numpy.typing import NDArray
 from typing import Optional, Tuple, List, Dict
-import warnings
 import nibabel as nib
 from dataclasses import dataclass
-
-from processingUtils import reorient_from_fsl, crop_to_nonzero, apply_crop_bounds
+from MRISlices import MRISlices
 from dcm2bids import display_dropdown_menu, list_bids_subjects_sessions_scans, build_series_list
 from userInteraction import prompt_user
+from plotConfig import PlotConfig
 
 plt.switch_backend("Agg")  # For non-GUI environments
-
-@dataclass
-class PlotConfig:
-    """Configuration for individual MRI plotting."""
-    padding: int = 10
-    fps: int = 10
-    crop: bool = False
-    reorient: bool = True
-    mask_underlay: bool = False
-    mask: Optional[str] = None  # Path or name of the mask image
-    underlay_image: Optional[str] = None  # Path or name of the underlay image
-    dpi: int = 100
-    scale_factor: int = 6
-    max_fig_size = 1500
 
 class MRIDataProcessor:
     """Handles preprocessing of MRI data, underlay images, and masks."""
     def __init__(self, 
-                 mri_data: NDArray, 
+                 mri_data_path: str, 
                  config: PlotConfig, 
-                 underlay_image: Optional[NDArray] = None, 
-                 mask: Optional[NDArray] = None):
-        self.mri_data = mri_data
-        self.underlay_image = underlay_image
-        self.mask = mask
+                 underlay_image_path: Optional[str] = None, 
+                 mask_path: Optional[str] = None):
+        self.mri_data_path = mri_data_path
+        self.underlay_image_path = underlay_image_path
+        self.mask_path = mask_path
         self.config = config
+        self._import_scans()
+        self._extract_slices()
 
-    def preprocess(self):
-        """Reorient data and apply cropping if necessary."""
+    def _import_scans(self):
+        self.mri_data = nib.load(self.mri_data_path)
+        self.mask = nib.load(self.mask_path) if self.mask_path else None
+        self.underlay_image = nib.load(self.underlay_image_path) if self.underlay_image_path else None
         
-        # find slices
-        
+    def _extract_slices(self):
+        """Extract the middle slices of volumes"""
+        # If there is a mask and crop is true, the slices need to be taken from the center of the mask.
         if self.mask is not None:
-            self._crop_image()
-            if self.config.crop is True:
-                # Expand the mask to match the dimensions of self.mri_data
-                expanded_mask = self.mask
-                while expanded_mask.ndim < self.mri_data.ndim:
-                    expanded_mask = expanded_mask[..., np.newaxis]
-
-                # Apply the mask to zero out spatial dimensions
-                self.mri_data = self.mri_data * expanded_mask
-                
-            if self.config.mask_underlay is True and self.underlay_image is not None:
-                # Expand the mask to match the dimensions of the underlay image
-                expanded_mask = self.mask
-                while expanded_mask.ndim < self.underlay_image.ndim:
-                    expanded_mask = expanded_mask[..., np.newaxis]
-
-                # Apply the expanded mask to the underlay image
-                self.underlay_image = self.underlay_image * expanded_mask
-
-                if self.underlay_image.ndim == 4:
-                    # Retain only the first slice along the 4th dimension
-                    self.underlay_image = self.underlay_image[:, :, :, 0]
-                elif self.underlay_image.ndim == 3:
-                    # No changes needed for 3D images
-                    pass
+            if self.config.crop is True: # selected crop
+                self.mask_slices = MRISlices.mask_from_nibabel(self.mask)
+                mask_locations = self.mask_slices.get_slice_locations()
+                mask_cropping = self.mask_slices.get_cropping_bounds()
+                self.mri_slices = MRISlices.from_nibabel(self.mri_data, mask_locations, mask_cropping)
+                if self.underlay_image is not None:
+                    self.underlay_slices = MRISlices.from_nibabel(self.underlay_image, mask_locations, mask_cropping)
                 else:
-                    raise ValueError(f"Expected 3D or 4D image, but got {self.underlay_image.ndim}D.")
-            
-        if self.config.reorient:
-            self.mri_data = reorient_from_fsl(self.mri_data)
+                    self.underlay_slices = None # TODO: Make a default value.
+            else:
+                self.mask = MRISlices.from_nibabel(self.mask)
+                self.mri_slices = MRISlices.from_nibabel(self.mri_data)
+                self.underlay_slices = MRISlices.from_nibabel(self.underlay_image)
+        else:
+            self.mri_slices = MRISlices.from_nibabel(self.mri_data)
             if self.underlay_image is not None:
-                self.underlay_image = reorient_from_fsl(self.underlay_image)
-            if self.mask is not None:
-                self.mask = reorient_from_fsl(self.mask)
-
-    def _crop_image(self):
-        """Applies cropping to the MRI data and mask."""
-        cropped_mask, _, crop_bounds = crop_to_nonzero(self.mask, padding=self.config.padding)
-        self.mask = cropped_mask
-        self.mri_data = apply_crop_bounds(self.mri_data, crop_bounds)
-
-        if self.underlay_image is not None:
-            self.underlay_image = apply_crop_bounds(self.underlay_image, crop_bounds)
+                self.underlay_slices = MRISlices.from_nibabel(self.underlay_image)
+            else: 
+                self.underlay_slices = None # TODO: Make a default value.
+            
             
 class MRIPlotter:
     """Handles plotting of MRI data in 3D, 4D, or 5D formats."""
     def __init__(self, 
-                 mri_data: NDArray, 
+                 mri_data: MRISlices, 
                  config: PlotConfig, 
                  output_dir: str,
                  scan_name: str, 
-                 underlay_image: Optional[NDArray] = None):
+                 underlay_image: Optional[MRISlices] = None):
         
         self.mri_data = mri_data
         self.config = config
         self.output_dir = output_dir
         self.scan_name = scan_name
         self.underlay_image = underlay_image
-        self.intensity_bounds = (np.min(self.mri_data), np.max(self.mri_data))
         self.video_paths = self._get_video_paths()
 
         os.makedirs(self.output_dir, exist_ok=True)
@@ -124,7 +84,7 @@ class MRIPlotter:
 
     def plot(self):
         """Plots the MRI data based on its dimensionality."""
-        dimensions = self.mri_data.ndim
+        dimensions = len(self.mri_data.shape)
         if dimensions == 3:
             self._plot_3d()
         elif dimensions == 4:
@@ -144,8 +104,8 @@ class MRIPlotter:
         macro_block_size = 16  # Default macro block size for compatibility
 
         # Calculate the raw pixel dimensions
-        fig_width_px = slice_width * self.config.scale_factor
-        fig_height_px = slice_height * self.config.scale_factor
+        fig_width_px = slice_width * self.config.figure_scale_factor
+        fig_height_px = slice_height * self.config.figure_scale_factor
 
         # Scale dimensions to ensure the maximum size is adhered to
         scale_ratio = min(max_size / fig_width_px, max_size / fig_height_px)
@@ -161,78 +121,14 @@ class MRIPlotter:
         fig_height = fig_height_px / self.config.dpi
 
         return fig_width, fig_height
-        
-    def extract_three_plane_slices(self, volume: np.ndarray) -> Dict[str, np.ndarray]:
-        """
-        Extracts mid-slices for three orthogonal planes (axial, coronal, sagittal) from a 3D volume.
-
-        Parameters:
-        - volume: 3D NumPy array representing MRI data.
-
-        Returns:
-        - Dict[str, np.ndarray]: A dictionary with keys as plane names and values as extracted slices.
-        """
-        # Determine mid-slices along each axis
-        mid_slices = [dim // 2 for dim in volume.shape]
-
-        # Extract the three orthogonal planes
-        planes = {
-            "axial": volume[mid_slices[0], :, :], # Remember the dims are no longer x y z because of the reorientation for presentation. It is now z y x 
-            "coronal": volume[:, mid_slices[1], :],
-            "sagittal": volume[:, :, mid_slices[2]]
-        }
-
-        return planes
-    
-    def add_titles_and_generate_images(
-            self, 
-            slices: Dict[str, np.ndarray], 
-            title_prefix: str = "", 
-            intensity_bounds: Optional[Tuple[float, float]] = None
-        ) -> Dict[str, np.ndarray]:
-        """
-        Adds titles and generates images for the provided slices.
-
-        Parameters:
-        - slices: Dictionary of plane slices with keys as plane names and values as slice data.
-        - title_prefix: Optional title prefix for the slices.
-        - intensity_bounds: Tuple specifying (min, max) intensity bounds for consistent scaling.
-
-        Returns:
-        - Dict[str, np.ndarray]: A dictionary with keys as plane names and values as images.
-        """
-        returned_images = {}
-
-        for plane_name, slice_data in slices.items():
-            # Use the class method to calculate figure size
-            fig_width, fig_height = self.calculate_compatible_figure_size(slice_data)
-
-            # Create the figure
-            fig, ax = plt.subplots(figsize=(fig_width, fig_height), dpi=self.config.dpi)
-            vmin, vmax = intensity_bounds if intensity_bounds else (None, None)
-            ax.imshow(slice_data, cmap="gray", vmin=vmin, vmax=vmax)
-            ax.set_title(f"{title_prefix} {plane_name.capitalize()} Slice")
-            ax.axis("off")
-            plt.tight_layout()
-
-            # Render the figure to an image array
-            fig.canvas.draw()
-            image_array = extract_image_from_canvas(fig)
-            returned_images[plane_name] = image_array
-
-            # Close the figure to free memory
-            plt.close(fig)
-
-        return returned_images
 
     def _plot_3d(self):
         """
         Generates images for three orthogonal planes from 3D MRI data and saves them.
         """
         # Generate images for the three planes
-        plane_slices = self.extract_three_plane_slices(self.mri_data)
-        plane_images = self.add_titles_and_generate_images(plane_slices,title_prefix=self.scan_name, intensity_bounds=self.intensity_bounds)
-
+        plane_images = self.mri_data.add_titles_and_generate_images(config=self.config, title_prefix=self.scan_name)
+    
         # Save the generated images
         for plane, image in plane_images.items():
             output_path = os.path.join(self.output_dir, f"{self.scan_name}_{plane}.png")
@@ -250,10 +146,9 @@ class MRIPlotter:
 
         # Iterate over timepoints
         for t in range(self.mri_data.shape[-1]):
+            
             # Generate images for the three planes at the current timepoint
-            plane_slices = self.extract_three_plane_slices(self.mri_data[..., t])
-            plane_images = self.add_titles_and_generate_images(plane_slices,title_prefix=f"{self.scan_name} Time: {t}", 
-                                                               intensity_bounds=self.intensity_bounds)
+            plane_images = self.mri_data.add_titles_and_generate_images(config=self.config, title_prefix=self.scan_name, slice_timepoint=t, underlay_slice=self.underlay_image)
 
             # Add frames to the respective video writers
             for plane, image in plane_images.items():
@@ -269,171 +164,19 @@ class MRIPlotter:
             for plane, path in self.video_paths.items()
         }
         
-        for t in range(self.mri_data.shape[-1]):  # Iterate over timepoints
+        # Iterate over timepoints
+        for t in range(1, self.mri_data.shape[-1]):
             
-            # Calculate the underlay image slices if it exists
-            if self.underlay_image is not None:
-                underlay_plane_images = self.extract_three_plane_slices(self.underlay_image)
-            
-            plane_to_axis = {
-                'axial': 0,      # Corresponds to slicing along the Z-axis
-                'coronal': 1,   # Corresponds to slicing along the Y-axis
-                'sagittal': 2,  # Corresponds to slicing along the X-axis
-            }
-            
-            for plane, axis in plane_to_axis.items():
-                
-                index = self.mri_data.shape[axis] // 2  # Take the midpoint slice along the axis
+            # Generate images for the three planes at the current timepoint
+            plane_images = self.mri_data.add_titles_and_generate_images(config=self.config, title_prefix=self.scan_name, slice_timepoint=t, underlay_slice=self.underlay_image)
 
-                # Extract in-plane displacement components
-                if plane == 'sagittal':
-                    disp1 = self.mri_data[index, :, :, 1, t]  # Y-component
-                    disp2 = self.mri_data[index, :, :, 2, t]  # Z-component
-                elif plane == 'coronal':
-                    disp1 = self.mri_data[:, index, :, 0, t]  # X-component
-                    disp2 = self.mri_data[:, index, :, 2, t]  # Z-component
-                elif plane == 'axial':
-                    disp1 = self.mri_data[:, :, index, 0, t]  # X-component
-                    disp2 = self.mri_data[:, :, index, 1, t]  # Y-component    
-                
-                if self.underlay_image is not None:    
-                    underlay_image = underlay_plane_images[plane]
-                else:
-                    underlay_image = None
+            # Add frames to the respective video writers
+            for plane, image in plane_images.items():
+                video_writers[plane].append_data(image)
 
-                # Generate the displacement vector frame
-                frame = self._plot_displacement_vectors(disp1, disp2, plane, t, underlay_image)
-                
-                # Write the frame to the video writer
-                video_writers[plane].append_data(frame)
-        
+        # Close all video writers
         for writer in video_writers.values():
             writer.close()
-
-    def _plot_displacement_vectors(self, disp1: NDArray, disp2: NDArray, plane: str, timepoint: int, underlay_image: Optional[NDArray] = None) -> NDArray:
-        """
-        Plots displacement vectors on a given plane slice at a specific timepoint, with downsampling and color normalization.
-
-        Args:
-            disp1 (NDArray): First in-plane displacement component (e.g., X or Y).
-            disp2 (NDArray): Second in-plane displacement component (e.g., Y or Z).
-            plane (str): Orientation of the plane ('sagittal', 'coronal', 'axial').
-            timepoint (int): Timepoint index.
-
-        Returns:
-            NDArray: Generated frame as a numpy array (RGB image).
-        """
-        # Downsample factor for the grid and displacement
-        downsample_factor = 5
-
-        # Downsample displacement fields and grid
-        X, Y = np.meshgrid(np.arange(disp1.shape[1]), np.arange(disp1.shape[0]))
-        X_down = X[::downsample_factor, ::downsample_factor]
-        Y_down = Y[::downsample_factor, ::downsample_factor]
-        disp1_down = disp1[::downsample_factor, ::downsample_factor]
-        disp2_down = disp2[::downsample_factor, ::downsample_factor]
-
-        # Flip the Y-axis for consistent orientation
-        Y_down = Y_down[::-1, :]
-        
-        # Calculate figure dimensions based on slice size and scale by downsampling factor
-        fig_width, fig_height = self.calculate_compatible_figure_size(disp1_down)
-
-        # Set up the figure
-        fig, ax = plt.subplots(figsize=(fig_width, fig_height), dpi=self.config.dpi)
-
-        # Compute vector magnitudes for color normalization
-        magnitudes = np.sqrt(disp1_down**2 + disp2_down**2)
-        vmin, vmax = self.intensity_bounds if self.intensity_bounds else (0, magnitudes.max())
-
-        # Normalize the color based on magnitudes
-        norm = Normalize(vmin=0, vmax=vmax)
-        sm = ScalarMappable(cmap="viridis", norm=norm)
-        colors = sm.to_rgba(magnitudes)
-
-        # Adjust alpha values for zero displacements
-        zero_disp_mask = (disp1_down == 0) & (disp2_down == 0)
-        colors[:, :, 3] = np.where(zero_disp_mask, 0, colors[:, :, 3])  # Set alpha to 0 for zero vectors
-
-        # Scale the displacement vectors for visualization
-        scale_factor = 120
-        arrow_thickness = 0.003
-        disp1_down_scaled = disp1_down * scale_factor
-        disp2_down_scaled = disp2_down * scale_factor
-        
-        # Plot the underlay if provided
-        if underlay_image is not None:
-            # Normalize the underlay to [0, 1] and convert to grayscale
-            underlay_image = (underlay_image - underlay_image.min()) / (underlay_image.max() - underlay_image.min())
-        
-        if underlay_image is not None:
-            ax.imshow(
-                underlay_image,
-                cmap="gray",
-                interpolation="nearest",
-                extent=(0.0, float(disp1.shape[1]), 0.0, float(disp1.shape[0]))
-            )
-
-        # Plot the vector field
-        Q = ax.quiver(
-            X_down, Y_down,
-            disp1_down_scaled, disp2_down_scaled,
-            angles="xy", scale_units="xy", scale=1, width=arrow_thickness
-        )
-
-        # Apply colors to the quiver arrows
-        quiver_colors = colors.reshape(-1, 4)
-        Q.set_color([tuple(color) for color in quiver_colors])
-
-        # Set title and remove ticks
-        ax.set_title(f"{plane.capitalize()} Plane at Timepoint {timepoint}")
-        ax.set_xticks([]), ax.set_yticks([])
-
-        plt.tight_layout()  # Ensure optimized layout
-
-        # Render the figure to a frame
-        fig.canvas.draw()
-        frame = extract_image_from_canvas(fig)
-
-        # Pad the frame to ensure dimensions are divisible by 16
-        macro_block_size = 16
-        height, width, _ = frame.shape
-        padded_height = (height + macro_block_size - 1) // macro_block_size * macro_block_size
-        padded_width = (width + macro_block_size - 1) // macro_block_size * macro_block_size
-
-        padded_frame = np.zeros((padded_height, padded_width, 3), dtype=frame.dtype)
-        padded_frame[:height, :width, :] = frame
-
-        # Close the figure to free memory
-        plt.close(fig)
-
-        return frame
-    
-def extract_image_from_canvas(fig: plt.Figure, discard_alpha: bool = True) -> np.ndarray:
-    """
-    Extracts the rendered image from a Matplotlib figure's canvas as a NumPy array.
-
-    Args:
-        fig (plt.Figure): The Matplotlib figure object.
-        discard_alpha (bool): Whether to discard the alpha channel (default is True).
-
-    Returns:
-        np.ndarray: The image as a NumPy array (RGB or RGBA depending on discard_alpha).
-    """
-    # Get the actual size of the canvas
-    width, height = fig.canvas.get_width_height()
-
-    # Extract RGBA data from the canvas buffer
-    buffer = np.frombuffer(fig.canvas.buffer_rgba(), dtype=np.uint8)  # type:ignore
-
-    # Reshape the buffer using dynamically determined width and height
-    img_array = buffer.reshape((height, width, 4))  # Shape is (height, width, 4) for RGBA
-
-    # Discard the alpha channel if requested
-    if discard_alpha:
-        img_array = img_array[:, :, :3]
-
-    return img_array
 
 def find_unique_scans_in_bids(bids_folder: str, file_extension: str = ".nii.gz") -> List[str]:
     """
@@ -455,7 +198,7 @@ def find_unique_scans_in_bids(bids_folder: str, file_extension: str = ".nii.gz")
     unique_scans = build_series_list(subject_session)
     
     return unique_scans
-
+        
 @dataclass
 class GroupPlotConfig:
     """Configuration for group plotting."""
@@ -465,10 +208,6 @@ class GroupPlotConfig:
     all_scans: list[str]
 
 class GroupPlotter:
-    """
-    Handles plotting for multiple MRI scans with user-configured scan-specific options.
-    """
-
     def __init__(self, config: GroupPlotConfig, subject_session_list: dict[str, dict[str, dict[str, dict[str, str]]]]):
         """
         Initializes the GroupPlotter.
@@ -508,7 +247,6 @@ class GroupPlotter:
             padding=prompt_user("Enter padding:", default="10", parse_type=int),
             fps=prompt_user("Enter FPS:", default="10", parse_type=int),
             crop=prompt_user("Crop to mask? (y/n):", default="n", parse_type=bool),
-            reorient=prompt_user("Reorient data? (y/n):", default="y", parse_type=bool),
             mask=self._select_scan("Select a scan to use as the mask (optional):"),
             underlay_image=self._select_scan("Select a scan to use as the underlay image (optional):"),
             mask_underlay=prompt_user("Mask underlay? (y/n):", default="n", parse_type=bool),
@@ -575,27 +313,21 @@ class GroupPlotter:
                         mask_path = self._find_scan_path(subject, session, scan_config.mask)
                         underlay_path = self._find_scan_path(subject, session, scan_config.underlay_image)
 
-                        # Load the data
-                        mri_data = nib.load(metadata["scan_path"]).get_fdata()
-                        mask = nib.load(mask_path).get_fdata() if mask_path else None
-                        underlay_image = nib.load(underlay_path).get_fdata() if underlay_path else None
-
                         # Initialize and preprocess the MRI data
                         processor = MRIDataProcessor(
-                            mri_data=mri_data,
+                            mri_data_path=metadata["scan_path"],
                             config=scan_config,
-                            underlay_image=underlay_image,
-                            mask=mask
+                            underlay_image_path=underlay_path,
+                            mask_path=mask_path
                         )
-                        processor.preprocess()
 
                         # Initialize and run the plotter
                         plotter = MRIPlotter(
-                            mri_data=processor.mri_data,
+                            mri_data=processor.mri_slices,
                             config=scan_config,
                             output_dir=os.path.join(self.config.output_dir, subject, session),
                             scan_name=scan,
-                            underlay_image=processor.underlay_image
+                            underlay_image=processor.underlay_slices
                         )
                         plotter.plot()
                         

@@ -1,5 +1,6 @@
 import numpy as np
 from numpy.typing import NDArray
+from typing import Tuple
 
 def reorient_from_fsl(mri_data: NDArray, reverse: bool = False, reorient_displacement: bool = False) -> np.ndarray:
     """
@@ -57,19 +58,23 @@ def reorient_from_fsl(mri_data: NDArray, reverse: bool = False, reorient_displac
 
     return mri_reorient
 
-def crop_to_nonzero(MRIimage: np.ndarray, padding:int = 0):
+def crop_to_nonzero(
+    MRIimage: NDArray, 
+    padding: int = 0
+) -> Tuple[NDArray, NDArray, Tuple[Tuple[int, int], Tuple[int, int], Tuple[int, int]]]:
     """
     Crops the input MRI image to the smallest bounding box containing all non-zero elements, with optional padding.
-    
+
     Parameters:
-    - MRIimage: A numpy array representing the MRI image. Must have at least three spatial dimensions (x, y, z).
-    - padding: Optional integer specifying the number of voxels to pad around the non-zero elements. Default is 0.
-    
+    - MRIimage (NDArray[np.float_]): A NumPy array representing the MRI image. Must have at least three spatial dimensions (x, y, z).
+    - padding (int): Optional integer specifying the number of voxels to pad around the non-zero elements. Default is 0.
+
     Returns:
-    - cropped_MRIimage: The cropped MRI image with dimensions matching the crop bounds.
-    - mask: A boolean array indicating the non-zero elements within the cropping bounds, including padding.
-    - crop_bounds: A 3x2 array specifying the start and end indices of the cropping bounds for [x, y, z].
-    
+    - cropped_MRIimage (NDArray[np.float_]): The cropped MRI image with dimensions matching the crop bounds.
+    - mask (NDArray): A boolean array indicating the non-zero elements within the cropping bounds, including padding.
+    - crop_bounds (Tuple[Tuple[int, int], Tuple[int, int], Tuple[int, int]]): A 3x2 tuple specifying the start and end indices 
+      of the cropping bounds for [x, y, z].
+
     Raises:
     - ValueError: If MRIimage does not have at least three spatial dimensions.
     - ValueError: If padding is negative.
@@ -123,7 +128,7 @@ def crop_to_nonzero(MRIimage: np.ndarray, padding:int = 0):
         z_end = min(z_end + 1, MRIimage.shape[2] - 1)
 
     # Extract cropping bounds
-    crop_bounds = np.array([[x_start, x_end], [y_start, y_end], [z_start, z_end]])
+    crop_bounds = ((x_start, x_end), (y_start, y_end), (z_start, z_end))
 
     # Crop MRIimage based on calculated bounds
     try:
@@ -141,7 +146,6 @@ def crop_to_nonzero(MRIimage: np.ndarray, padding:int = 0):
 
     return cropped_MRIimage, mask, crop_bounds
 
-import numpy as np
 
 def apply_crop_bounds(array, crop_bounds):
     """
