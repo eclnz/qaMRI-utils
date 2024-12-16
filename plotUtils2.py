@@ -53,23 +53,24 @@ class MRIDataProcessor:
             if self.config.crop is True:
                 
                 # Read MRI with the mask applied
-                self.mri_slices = MRISlices.from_nibabel(self.config,self.mri_data, self.mask)
+                self.mri_slices = MRISlices.from_nibabel(self.config,self.mri_data, self.mask, apply_mask=True)
                 
-                # If the user also supplies underlay
+                # If the user also supplies underlay read in
                 if self.underlay_image is not None:
-                    
-                    # Read underlay with mask applied 
-                    # TODO:always applies mask to underlay, while this should be specified by user.
-                    self.underlay_slices = MRISlices.from_nibabel(self.config,self.underlay_image, self.mask)
+                    # If the user specifies for underlay to be masked
+                    if self.config.mask_underlay:
+                        self.underlay_slices = MRISlices.from_nibabel(self.config,self.underlay_image, self.mask, apply_mask=True)
+                    else:
+                        self.underlay_slices = MRISlices.from_nibabel(self.config,self.underlay_image, self.mask, apply_mask=False)
                 # If user does not supply underlay its set to None
                 else:
                     self.underlay_slices = None
             # If user provides mask but does not set crop to true
-            #TODO: if mask is not provided then it does not get applied. I need a new method which applies the masking seperately to be called here.
             else:
-                self.mri_slices = MRISlices.from_nibabel(self.config,self.mri_data)
-                self.underlay_slices = MRISlices.from_nibabel(self.config,self.underlay_image)
-        # If user does not provide a mask
+                self.mri_slices = MRISlices.from_nibabel(self.config,self.mri_data,self.mask, apply_mask=False)
+                self.underlay_slices = MRISlices.from_nibabel(self.config,self.underlay_image,self.mask, apply_mask=False)
+        
+        # If user does not provide a mask at all
         else:
             # Read mri image normally
             self.mri_slices = MRISlices.from_nibabel(self.config,self.mri_data)
@@ -239,7 +240,7 @@ class GroupPlotter:
             Dict: Configured options for the scan.
         """
         print(f"\nConfiguring options for scan: {scan}")
-        return PlotConfig(
+        config = PlotConfig(
             padding=prompt_user("Enter padding:", default="10", parse_type=int),
             fps=prompt_user("Enter FPS:", default="10", parse_type=int),
             crop=prompt_user("Crop to mask? (y/n):", default="n", parse_type=bool),
@@ -247,6 +248,7 @@ class GroupPlotter:
             underlay_image=self._select_scan("Select a scan to use as the underlay image (optional):"),
             mask_underlay=prompt_user("Mask underlay? (y/n):", default="n", parse_type=bool),
         )
+        return config
         
     def _find_scan_path(self, subject: str, session: str, scan_name: str|None) -> Optional[str]:
         """

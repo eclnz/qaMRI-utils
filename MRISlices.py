@@ -28,9 +28,9 @@ class MRISlices:
         image: nib.Nifti1Image, 
         mask: Optional[nib.Nifti1Image] = None,
         slice_locations: Optional[Tuple[int, int, int]] = None, 
-        cropping_bounds: Optional[Tuple[Tuple[int, int], Tuple[int, int], Tuple[int, int]]] = None
-        ) -> "MRISlices":
-        
+        cropping_bounds: Optional[Tuple[Tuple[int, int], Tuple[int, int], Tuple[int, int]]] = None,
+        apply_mask: bool = False
+    ) -> "MRISlices":
         # Reorient images to RAS+
         canonical_mri = nib.as_closest_canonical(image)
         shape = canonical_mri.shape
@@ -78,7 +78,7 @@ class MRISlices:
         coronal = data[coronal_slice]
         sagittal = data[sagittal_slice]
         
-        if mask is not None:
+        if mask is not None and apply_mask:
             mask_data = canonical_mask.dataobj
             mask_axial = mask_data[axial_slice]
             mask_coronal = mask_data[coronal_slice]

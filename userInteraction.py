@@ -1,7 +1,11 @@
-from typing import List, Optional, Any
-
-def prompt_user(prompt: str, default: Optional[str] = None, options: Optional[List[str]] = None, 
-                allow_skip: bool = False, parse_type: Optional[type] = str) -> Any:
+from typing import Optional, List, Any
+def prompt_user(
+    prompt: str,
+    default: Optional[str] = None,
+    options: Optional[List[str]] = None,
+    allow_skip: bool = False,
+    parse_type: Optional[type] = str,
+) -> Any:
     """
     Prompt the user for input with options and default values.
 
@@ -13,7 +17,7 @@ def prompt_user(prompt: str, default: Optional[str] = None, options: Optional[Li
         parse_type (Optional[type]): Type to parse the input into.
 
     Returns:
-        Any: The user input parsed to the specified type.
+        Any: The user input parsed to the specified type or custom logic for special cases.
     """
     while True:
         # Build the full prompt message
@@ -26,12 +30,23 @@ def prompt_user(prompt: str, default: Optional[str] = None, options: Optional[Li
         # Get user input
         response = input(msg).strip()
         if not response and default is not None:
-            # Use parse_type only if it's provided, otherwise return the default as-is
-            return parse_type(default) if parse_type else default
+            response = default
 
-        if options and response not in options:
-            print("Invalid option. Please choose from the available options.")
-            continue
+        if options:
+            # Check if the response matches any option (case-insensitive)
+            if response.lower() not in [opt.lower() for opt in options]:
+                print("Invalid option. Please choose from the available options.")
+                continue
+
+        # Special case: converting 'y'/'n' to boolean
+        if parse_type == bool:
+            if response.lower() in ['y', 'yes']:
+                return True
+            elif response.lower() in ['n', 'no']:
+                return False
+            else:
+                print("Invalid input. Please enter 'y' or 'n'.")
+                continue
 
         try:
             return parse_type(response) if parse_type else response
