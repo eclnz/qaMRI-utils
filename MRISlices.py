@@ -10,9 +10,6 @@ from matplotlib.cm import ScalarMappable
 from processingUtils import crop_to_nonzero
 from plotConfig import PlotConfig
 
-# TODO: padding needs to add outside to the cropping bounds.
-# TODO: zero signal outside of mask if masking
-
 @dataclass
 class MRISlices:
     axial: NDArray
@@ -27,27 +24,26 @@ class MRISlices:
     @classmethod
     def from_nibabel(
         cls, 
+        config: PlotConfig,
         image: nib.Nifti1Image, 
+        mask: Optional[nib.Nifti1Image] = None,
         slice_locations: Optional[Tuple[int, int, int]] = None, 
         cropping_bounds: Optional[Tuple[Tuple[int, int], Tuple[int, int], Tuple[int, int]]] = None
         ) -> "MRISlices":
-        """
-        Create an MRISlices object from a nibabel image with optional cropping bounds or slice locations.
-
-        Args:
-            image (nib.Nifti1Image): The NIfTI image.
-            slice_locations (Optional[Tuple[int, int, int]]): Indices for axial, coronal, and sagittal slices.
-                If None, defaults to the middle slices of the first three dimensions of the image.
-            cropping_bounds (Optional[Tuple[Tuple[int, int], Tuple[int, int], Tuple[int, int]]]): Bounds to crop the image 
-                before extracting slices.
-
-        Returns:
-            MRISlices: An initialized MRISlices object.
-        """
-        # Reorient image to RAS+
-        canonical_image = nib.as_closest_canonical(image)
         
-        shape = canonical_image.shape
+        # Reorient images to RAS+
+        canonical_mri = nib.as_closest_canonical(image)
+        shape = canonical_mri.shape
+        
+        # Load mask file if present and determine crop required
+        if mask is not None:
+            mask_slices = MRISlices.mask_from_nibabel(mask, config.padding)
+            slice_locations = mask_slices.get_slice_locations()
+            cropping_bounds = mask_slices.get_cropping_bounds()
+            canonical_mask = nib.as_closest_canonical(mask)
+            
+            if canonical_mri.shape[:3] != canonical_mask.shape[:3]:
+                raise ValueError("MRI images and mask are incompatible sizes in the first three dimensions.")
 
         if len(shape) < 3:
             raise ValueError("The image must have at least 3 dimensions to extract slices.")
@@ -75,14 +71,31 @@ class MRISlices:
         sagittal_slice = (slice_locations[0], slices[1], slices[2])  # Sagittal: (specific x, y, z)
         
         # Access the data and extract slices
-        data = canonical_image.dataobj 
+        data = canonical_mri.dataobj 
 
-        # Extract and rotate slices
-        axial = np.rot90(data[axial_slice], k=1, axes=(0, 1))  # Rotate the axial slice
-        coronal = np.rot90(data[coronal_slice], k=1, axes=(0, 1))  # Rotate the coronal slice
-        sagittal = np.flip(np.rot90(data[sagittal_slice], k=-1, axes=(0, 1)), axis=0)
-
+        # Extract slices
+        axial = data[axial_slice]
+        coronal = data[coronal_slice]
+        sagittal = data[sagittal_slice]
         
+        if mask is not None:
+            mask_data = canonical_mask.dataobj
+            mask_axial = mask_data[axial_slice]
+            mask_coronal = mask_data[coronal_slice]
+            mask_sagittal = mask_data[sagittal_slice]
+            
+            # Expand dimensions of 2D masks to match 3D data
+            while mask_axial.ndim < axial.ndim:
+                mask_axial = mask_axial[..., np.newaxis]
+            while mask_coronal.ndim < coronal.ndim:
+                mask_coronal = mask_coronal[..., np.newaxis]
+            while mask_sagittal.ndim < sagittal.ndim:
+                mask_sagittal = mask_sagittal[..., np.newaxis]
+            
+            axial[:,:] *= mask_axial[:,:]
+            coronal[:,:] *= mask_coronal[:,:]
+            sagittal[:,:] *= mask_sagittal[:,:]
+            
         # Compute the minimum and maximum intensities across all slices
         intensity_bounds = (
             min(axial.min(), coronal.min(), sagittal.min()),  # Minimum intensity
@@ -94,7 +107,7 @@ class MRISlices:
             coronal=coronal, 
             sagittal=sagittal, 
             slice_locations=slice_locations,
-            affine=canonical_image.affine,
+            affine=canonical_mri.affine,
             cropping_bounds=cropping_bounds,
             intensity_bounds=intensity_bounds
         )
@@ -112,10 +125,10 @@ class MRISlices:
             MRISlices: An initialized MRISlices object with cropped slices and updated slice locations.
         """
         # Reorient image to RAS+
-        canonical_image = nib.as_closest_canonical(image)
+        canonical_mri = nib.as_closest_canonical(image)
         
         # Load full data and crop to non-zero
-        data: NDArray = np.asarray(canonical_image.get_fdata())
+        data: NDArray = np.asarray(canonical_mri.get_fdata())
         cropped_data, _, crop_bounds = crop_to_nonzero(data, padding=padding)
 
         # Calculate middle slices in the cropped volume
@@ -129,9 +142,9 @@ class MRISlices:
         new_sagittal_idx = (z_start + z_end) // 2
 
         # Extract and rotate slices from the cropped data
-        axial = np.rot90(cropped_data[new_axial_idx - x_start, :, :], k=-1, axes=(0, 1))
-        coronal = np.rot90(cropped_data[:, new_coronal_idx - y_start, :], k=-1, axes=(0, 1))
-        sagittal =  np.flip(np.rot90(cropped_data[:, :, new_sagittal_idx - z_start], k=-1, axes=(0, 1)), axis=0)
+        axial = cropped_data[new_axial_idx - x_start, :, :]
+        coronal = cropped_data[:, new_coronal_idx - y_start, :]
+        sagittal =  cropped_data[:, :, new_sagittal_idx - z_start]
         
                 # Compute the minimum and maximum intensities across all slices
         intensity_bounds = (
@@ -140,7 +153,7 @@ class MRISlices:
         )
         
         # Save transform matrix for determining orientation
-        affine = canonical_image.affine
+        affine = canonical_mri.affine
 
         # Return the MRISlices object
         return cls(
@@ -171,30 +184,6 @@ class MRISlices:
             self.sagittal.shape[0],
             *self.axial.shape[2:]  
         )
-        
-    @staticmethod
-    def _apply_cropping(image: nib.Nifti1Image, cropping_bounds: Tuple[Tuple[int, int], Tuple[int, int], Tuple[int, int]]) -> nib.Nifti1Image:
-        """
-        Apply cropping bounds to a NIfTI image.
-
-        Args:
-            image (nib.Nifti1Image): The NIfTI image to crop.
-            cropping_bounds (Tuple[Tuple[int, int], Tuple[int, int], Tuple[int, int]]): Cropping bounds for each axis.
-
-        Returns:
-            nib.Nifti1Image: The cropped NIfTI image.
-        """
-        x_bounds, y_bounds, z_bounds = cropping_bounds
-        x_start, x_end = x_bounds
-        y_start, y_end = y_bounds
-        z_start, z_end = z_bounds
-
-        # Extract the cropped data
-        cropped_data = np.asarray(image.dataobj, dtype=float)[x_start:x_end + 1, y_start:y_end + 1, z_start:z_end + 1]
-
-        # Create a new NIfTI image with the cropped data
-        cropped_affine = image.affine
-        return nib.Nifti1Image(cropped_data, cropped_affine)
 
     def get_slices(self) -> Tuple[NDArray, NDArray, NDArray]:
         """
@@ -247,9 +236,16 @@ class MRISlices:
         self.coronal *= mask_slices.coronal
         self.sagittal *= mask_slices.sagittal
         
+    def rotate_slices(self)->None:
+        '''Rotate the slices for viewing purposes'''
+        self.axial = np.flip(np.rot90(self.axial, k=-1, axes=(0, 1)), axis=0)
+        self.coronal = np.flip(np.rot90(self.coronal, k=-1, axes=(0, 1)), axis=0)
+        self.sagittal =  np.flip(np.rot90(self.sagittal, k=-1, axes=(0, 1)), axis=0)
+        
     def add_titles_and_generate_images(
         self,
         config: PlotConfig,
+        single_timepoint: bool,
         title_prefix: str = "",
         slice_timepoint: Optional[int] = None,
         underlay_slice: Optional[MRISlices] = None
@@ -258,78 +254,55 @@ class MRISlices:
         Adds titles and generates images for the three planes in an MRISlices object.
 
         Parameters:
-        - mri_slices: An instance of MRISlices containing the three orthogonal slices.
-        - title_prefix: Optional title prefix for the slices.
-        - intensity_bounds: Tuple specifying (min, max) intensity bounds for consistent scaling.
+            - config (PlotConfig): Configuration for plotting.
+            - single_timepoint (bool): Indicates if the data has a single timepoint.
+            - title_prefix (str): Optional title prefix for the slices.
+            - slice_timepoint (Optional[int]): Timepoint to extract slices from (for multi-timepoint data).
+            - underlay_slice (Optional[MRISlices]): Underlay slice for overlays (optional).
 
         Returns:
-        - Dict[str, np.ndarray]: A dictionary with keys as plane names ("axial", "coronal", "sagittal")
-        and values as rendered image arrays.
+            Dict[str, np.ndarray]: A dictionary with plane names ("axial", "coronal", "sagittal") 
+            as keys and rendered image arrays as values.
         """
-        returned_images = {}
-        
-        # Define specific slices to be used. Handles cases where there are multiple timepoints.
-        ## Assumes the timepoint is the last value in the array.
-        try:
-            if slice_timepoint is not None:
-                planes = {
-                    "axial": self.axial[..., slice_timepoint],
-                    "coronal": self.coronal[..., slice_timepoint],
-                    "sagittal": self.sagittal[..., slice_timepoint]
-                }
-            else:
-                planes = {
-                    "axial": self.axial,
-                    "coronal": self.coronal,
-                    "sagittal": self.sagittal
-                }
-        except IndexError:
-            raise ValueError(
-                f"Invalid slice_timepoint {slice_timepoint}. Timepoint out of bounds for the provided data."
-            )
-            
-        # Loop through all planes in slices object
-        for plane_name, slice_data in planes.items():
+        # Extract planes based on the timepoint
+        planes = {
+            "axial": self.axial[..., slice_timepoint] if slice_timepoint is not None else self.axial,
+            "coronal": self.coronal[..., slice_timepoint] if slice_timepoint is not None else self.coronal,
+            "sagittal": self.sagittal[..., slice_timepoint] if slice_timepoint is not None else self.sagittal,
+        }
 
-            # Correct figure dimensions given configuration settings (dpi,figure_scale_factor, max_fig_size)
+        returned_images = {}
+        for plane_name, slice_data in planes.items():
             fig_width, fig_height = self.calculate_compatible_figure_size(slice_data, config=config)
 
-            # If the slice data has more than 2 dimensions for a given timepoint, it must be a displacement image. 
-            if len(slice_data.shape)>2:
-                # Corresponding underlay slice if present
+            if slice_data.ndim > 2:
+                # Handle displacement images
                 underlay_data = getattr(underlay_slice, plane_name) if underlay_slice else None
-                
-                # In plane displacement
                 disp1, disp2 = extract_in_plane_displacement(slice=slice_data, plane=plane_name)
-                
-                # Plot displacement vectors as arrows.
                 slice_data = plot_displacement_vectors(
-                    config=config, 
-                    disp1=disp1, 
+                    config=config,
+                    disp1=disp1,
                     disp2=disp2,
                     fig_size=(fig_width, fig_height),
                     intensity_bounds=self.intensity_bounds,
-                    underlay_image=underlay_data
+                    underlay_image=underlay_data,
                 )
-                
                 scan_title = f"Displacement in {title_prefix} {plane_name.capitalize()} Slice, Timepoint {slice_timepoint}"
-            else:
+            elif not single_timepoint:
                 scan_title = f"{title_prefix} {plane_name.capitalize()} Slice, Timepoint {slice_timepoint}"
-            
+            else: 
+                scan_title = f"{title_prefix} {plane_name.capitalize()} Slice"
+
+            # Plot the slice
             fig, ax = plt.subplots(figsize=(fig_width, fig_height), dpi=config.dpi)
-            vmin, vmax = self.intensity_bounds
-            
-            ax.imshow(slice_data, cmap="gray", vmin=vmin, vmax=vmax)
+            ax.imshow(slice_data, cmap="gray", vmin=self.intensity_bounds[0], vmax=self.intensity_bounds[1])
             ax.set_title(scan_title)
             ax.axis("off")
             plt.tight_layout()
 
             # Render the figure to an image array
             fig.canvas.draw()
-            image_array = extract_image_from_canvas(fig)
-            returned_images[plane_name] = image_array
-
-            # Close the figure to free memory
+            returned_images[plane_name] = extract_image_from_canvas(fig)
             plt.close(fig)
 
         return returned_images
@@ -368,13 +341,14 @@ class MRISlices:
 
         return fig_width, fig_height
     
-def plot_displacement_vectors(config: PlotConfig, 
-                              disp1: NDArray, 
-                              disp2: NDArray, 
-                              fig_size: Tuple[float,float], 
-                              intensity_bounds: Tuple[int,int], 
-                              underlay_image: Optional[NDArray] = None
-                              ) -> NDArray:
+def plot_displacement_vectors(
+    config: PlotConfig, 
+    disp1: NDArray, 
+    disp2: NDArray, 
+    fig_size: Tuple[float,float], 
+    intensity_bounds: Tuple[int,int], 
+    underlay_image: Optional[NDArray] = None
+    ) -> NDArray:
     
     # Downsample displacement fields and grid
     X, Y = np.meshgrid(np.arange(disp1.shape[1]), np.arange(disp1.shape[0]))
@@ -412,8 +386,18 @@ def plot_displacement_vectors(config: PlotConfig,
         underlay_image = (underlay_image - underlay_image.min()) / (underlay_image.max() - underlay_image.min())
     
     if underlay_image is not None:
+        
+        if underlay_image.ndim == 2:
+            display_image = underlay_image  # Already 2D, no changes needed
+        elif underlay_image.ndim == 3:
+            display_image = underlay_image[:, :, 0]  # Reduce to 2D by taking the first slice along the third dimension
+        elif underlay_image.ndim == 4:
+            display_image = underlay_image[:, :, 0, 0]  # Reduce to 2D by taking the first slice along the third and fourth dimensions
+        else:
+            raise ValueError("Input array has unsupported dimensions")
+            
         ax.imshow(
-            underlay_image[...,0], # Display the first 2 spatial dimensions only., 
+            display_image,
             cmap="gray",
             interpolation="nearest",
             extent=(0.0, float(disp1.shape[1]), 0.0, float(disp1.shape[0]))

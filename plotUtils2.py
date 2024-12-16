@@ -6,6 +6,7 @@ from typing import Optional, Tuple, List, Dict
 import nibabel as nib
 from dataclasses import dataclass
 from MRISlices import MRISlices
+from MRIVideo import MRIMedia
 from dcm2bids import display_dropdown_menu, list_bids_subjects_sessions_scans, build_series_list
 from userInteraction import prompt_user
 from plotConfig import PlotConfig
@@ -19,12 +20,14 @@ class MRIDataProcessor:
                  config: PlotConfig, 
                  underlay_image_path: Optional[str] = None, 
                  mask_path: Optional[str] = None):
+        
         self.mri_data_path = mri_data_path
         self.underlay_image_path = underlay_image_path
         self.mask_path = mask_path
         self.config = config
         self._import_scans()
         self._extract_slices()
+        self._get_media_type()
 
     def _import_scans(self):
         self.mri_data = nib.load(self.mri_data_path)
@@ -33,124 +36,126 @@ class MRIDataProcessor:
         
     def _extract_slices(self):
         """Extract the middle slices of volumes"""
-        # If there is a mask and crop is true, the slices need to be taken from the center of the mask.
+        
+        # Check if the underlay matches spatial dimensions if present.
+        if self.underlay_image is not None:
+            if self.underlay_image.shape[:3] != self.mri_data.shape[:3]:
+                raise ValueError("Size of underlay image does not match size of MRI data in the first three dimensions")
+                
+        # If mask present
         if self.mask is not None:
-            if self.config.crop is True: # selected crop
-                self.mask_slices = MRISlices.mask_from_nibabel(self.mask)
-                mask_locations = self.mask_slices.get_slice_locations()
-                mask_cropping = self.mask_slices.get_cropping_bounds()
-                self.mri_slices = MRISlices.from_nibabel(self.mri_data, mask_locations, mask_cropping)
-                if self.underlay_image is not None:
-                    self.underlay_slices = MRISlices.from_nibabel(self.underlay_image, mask_locations, mask_cropping)
-                else:
-                    self.underlay_slices = None # TODO: Make a default value.
-            else:
-                self.mask = MRISlices.from_nibabel(self.mask)
-                self.mri_slices = MRISlices.from_nibabel(self.mri_data)
-                self.underlay_slices = MRISlices.from_nibabel(self.underlay_image)
-        else:
-            self.mri_slices = MRISlices.from_nibabel(self.mri_data)
-            if self.underlay_image is not None:
-                self.underlay_slices = MRISlices.from_nibabel(self.underlay_image)
-            else: 
-                self.underlay_slices = None # TODO: Make a default value.
             
+            # Check if the mask matches spatial dimensions if present.
+            if self.mask.shape[:3] != self.mri_data.shape[:3]:
+                raise ValueError("Size of mask does not match size of MRI data in the first three dimensions")
+            
+            # User specifies to crop the image
+            if self.config.crop is True:
+                
+                # Read MRI with the mask applied
+                self.mri_slices = MRISlices.from_nibabel(self.config,self.mri_data, self.mask)
+                
+                # If the user also supplies underlay
+                if self.underlay_image is not None:
+                    
+                    # Read underlay with mask applied 
+                    # TODO:always applies mask to underlay, while this should be specified by user.
+                    self.underlay_slices = MRISlices.from_nibabel(self.config,self.underlay_image, self.mask)
+                # If user does not supply underlay its set to None
+                else:
+                    self.underlay_slices = None
+            # If user provides mask but does not set crop to true
+            #TODO: if mask is not provided then it does not get applied. I need a new method which applies the masking seperately to be called here.
+            else:
+                self.mri_slices = MRISlices.from_nibabel(self.config,self.mri_data)
+                self.underlay_slices = MRISlices.from_nibabel(self.config,self.underlay_image)
+        # If user does not provide a mask
+        else:
+            # Read mri image normally
+            self.mri_slices = MRISlices.from_nibabel(self.config,self.mri_data)
+            
+            # If user provides underlay, then read that in without masking
+            if self.underlay_image is not None:
+                self.underlay_slices = MRISlices.from_nibabel(self.config,self.underlay_image)
+            # If no underlay supplied its set to none.
+            else: 
+                self.underlay_slices = None
+                
+        # Make sure the images are rotated from RSL so they appear normal clinically
+        self.mri_slices.rotate_slices()    
+        if self.underlay_image is not None:
+            self.underlay_slices.rotate_slices()    
+                
+    def _get_media_type(self)-> None:
+        slice_dims = len(self.mri_slices.axial.shape)
+        if slice_dims == 2:
+            self.media_type='png'
+        elif slice_dims > 2:
+            self.media_type='mp4'
             
 class MRIPlotter:
-    """Handles plotting of MRI data in 3D, 4D, or 5D formats."""
-    def __init__(self, 
-                 mri_data: MRISlices, 
-                 config: PlotConfig, 
-                 output_dir: str,
-                 scan_name: str, 
-                 underlay_image: Optional[MRISlices] = None):
-        
+    """Handles plotting of MRI data, generating either images or videos based on the media type."""
+    def __init__(
+        self, 
+        media_type: str,
+        mri_data: MRISlices, 
+        config: PlotConfig, 
+        output_dir: str,
+        scan_name: str, 
+        underlay_image: Optional[MRISlices] = None
+    ):
+        """
+        Args:
+            media_type (str): File format for the output (e.g., 'png', 'mp4').
+            mri_data (MRISlices): MRI data to be plotted.
+            config (PlotConfig): Configuration settings for plotting.
+            output_dir (str): Directory to save the output.
+            scan_name (str): Base name for the output files.
+            underlay_image (Optional[MRISlices]): Underlay image for overlays.
+        """
+        self.media_type = media_type
         self.mri_data = mri_data
         self.config = config
         self.output_dir = output_dir
         self.scan_name = scan_name
         self.underlay_image = underlay_image
-        self.video_paths = self._get_video_paths()
 
         os.makedirs(self.output_dir, exist_ok=True)
 
-    def _get_video_paths(self) -> Dict[str, str]:
-        """Generates paths for output videos."""
-        return {
-            'sagittal': os.path.join(self.output_dir, f"{self.scan_name}_sagittal.mp4"),
-            'coronal': os.path.join(self.output_dir, f"{self.scan_name}_coronal.mp4"),
-            'axial': os.path.join(self.output_dir, f"{self.scan_name}_axial.mp4")
-        }
-
     def plot(self):
-        """Plots the MRI data based on its dimensionality."""
-        dimensions = len(self.mri_data.shape)
-        if dimensions == 3:
-            self._plot_3d()
-        elif dimensions == 4:
-            self._plot_4d()
-        elif dimensions == 5:
-            self._plot_5d()
+        """Plots the MRI data based on the specified media type."""
+        if self.media_type == "png":
+            self._plot_images()
+        elif self.media_type == "mp4":
+            self._plot_videos()
         else:
-            raise ValueError("Unsupported data dimensions. Only 3D, 4D, and 5D data are supported.")
-        
-    def calculate_compatible_figure_size(self, slice_array: np.ndarray) -> Tuple[float, float]:
-        if slice_array.ndim != 2:
-            raise ValueError(f"Expected a 2D array for slice dimensions, but got {slice_array.ndim}D array.")
-        
-        max_size = self.config.max_fig_size
+            raise ValueError(f"Unsupported media type: {self.media_type}. Only 'png' and 'mp4' are supported.")
 
-        slice_height, slice_width = slice_array.shape
-        macro_block_size = 16  # Default macro block size for compatibility
+    def _plot_images(self):
+        """Generates and saves images for three orthogonal planes."""
+        plane_images = self.mri_data.add_titles_and_generate_images(
+            config=self.config, title_prefix=self.scan_name, single_timepoint=True
+        )
 
-        # Calculate the raw pixel dimensions
-        fig_width_px = slice_width * self.config.figure_scale_factor
-        fig_height_px = slice_height * self.config.figure_scale_factor
-
-        # Scale dimensions to ensure the maximum size is adhered to
-        scale_ratio = min(max_size / fig_width_px, max_size / fig_height_px)
-        fig_width_px *= scale_ratio #type:ignore
-        fig_height_px *= scale_ratio #type:ignore
-
-        # Ensure dimensions are compatible with video encoding by rounding up to the nearest macro_block_size
-        fig_width_px = int(np.ceil(fig_width_px / macro_block_size) * macro_block_size)
-        fig_height_px = int(np.ceil(fig_height_px / macro_block_size) * macro_block_size)
-
-        # Convert to inches using the configured DPI
-        fig_width = fig_width_px / self.config.dpi
-        fig_height = fig_height_px / self.config.dpi
-
-        return fig_width, fig_height
-
-    def _plot_3d(self):
-        """
-        Generates images for three orthogonal planes from 3D MRI data and saves them.
-        """
-        # Generate images for the three planes
-        plane_images = self.mri_data.add_titles_and_generate_images(config=self.config, title_prefix=self.scan_name)
-    
-        # Save the generated images
         for plane, image in plane_images.items():
             output_path = os.path.join(self.output_dir, f"{self.scan_name}_{plane}.png")
             imageio.imwrite(output_path, image)
 
-    def _plot_4d(self):
-        """
-        Generates videos for three orthogonal planes from 4D MRI data (across timepoints).
-        """
-        # Initialize video writers for each plane
-        video_writers = {
-            plane: imageio.get_writer(path, fps=self.config.fps)
-            for plane, path in self.video_paths.items()
-        }
+    def _plot_videos(self):
+        """Generates videos for three orthogonal planes."""
+        video_writers = self._initialize_video_writers()
 
         # Iterate over timepoints
-        for t in range(self.mri_data.shape[-1]):
+        for t in range(self.mri_data.shape[-1]): # Assumes last dimension is timepoint
+            plane_images = self.mri_data.add_titles_and_generate_images(
+                config=self.config,
+                title_prefix=self.scan_name,
+                single_timepoint=False,
+                slice_timepoint=t,
+                underlay_slice=self.underlay_image,
+            )
             
-            # Generate images for the three planes at the current timepoint
-            plane_images = self.mri_data.add_titles_and_generate_images(config=self.config, title_prefix=self.scan_name, slice_timepoint=t, underlay_slice=self.underlay_image)
-
-            # Add frames to the respective video writers
+            # Write all frames by appending images to video writers
             for plane, image in plane_images.items():
                 video_writers[plane].append_data(image)
 
@@ -158,25 +163,16 @@ class MRIPlotter:
         for writer in video_writers.values():
             writer.close()
 
-    def _plot_5d(self):
-        video_writers = {
-            plane: imageio.get_writer(path, fps=self.config.fps, codec="libx264")
-            for plane, path in self.video_paths.items()
+    def _initialize_video_writers(self):
+        """Initializes video writers for each plane."""
+        return {
+            plane: imageio.get_writer(
+                os.path.join(self.output_dir, f"{self.scan_name}_{plane}.mp4"),
+                fps=self.config.fps,
+                codec="libx264",
+            )
+            for plane in ["sagittal", "coronal", "axial"]
         }
-        
-        # Iterate over timepoints
-        for t in range(1, self.mri_data.shape[-1]):
-            
-            # Generate images for the three planes at the current timepoint
-            plane_images = self.mri_data.add_titles_and_generate_images(config=self.config, title_prefix=self.scan_name, slice_timepoint=t, underlay_slice=self.underlay_image)
-
-            # Add frames to the respective video writers
-            for plane, image in plane_images.items():
-                video_writers[plane].append_data(image)
-
-        # Close all video writers
-        for writer in video_writers.values():
-            writer.close()
 
 def find_unique_scans_in_bids(bids_folder: str, file_extension: str = ".nii.gz") -> List[str]:
     """
@@ -323,6 +319,7 @@ class GroupPlotter:
 
                         # Initialize and run the plotter
                         plotter = MRIPlotter(
+                            media_type=processor.media_type,
                             mri_data=processor.mri_slices,
                             config=scan_config,
                             output_dir=os.path.join(self.config.output_dir, subject, session),
