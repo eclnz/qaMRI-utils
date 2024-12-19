@@ -262,7 +262,7 @@ def extract_dicom_from_zip(zip_path: str, internal_path: str, temp_dir: str) -> 
         print(f"Error extracting DICOM files from {zip_path}: {e}")
         return ""
 
-def build_series_list(subjects_sessions_scans: DefaultDict[str, DefaultDict[str, DefaultDict[str, DefaultDict[str, str]]]]) -> list:
+def build_series_list(subjects_sessions_scans: dict[str, dict[str, dict[str, dict[str, str]]]]) -> list:
     """
     Finds all unique scan names in the subjects_sessions_scans structure.
 
@@ -282,7 +282,7 @@ def build_series_list(subjects_sessions_scans: DefaultDict[str, DefaultDict[str,
 
     return sorted(unique_scans)
 
-def list_bids_subjects_sessions_scans(data_directory: str, file_extension: str) -> Dict[str, Dict[str, Dict[str, Dict[str, str]]]]:
+def list_bids_subjects_sessions_scans(data_directory: str, file_extension: str, raw: bool = False) -> Dict[str, Dict[str, Dict[str, Dict[str, str]]]]:
     """
     Recursively traverses directories to list files by subject, session, and scan in a BIDS-compliant structure.
 
@@ -326,9 +326,10 @@ def list_bids_subjects_sessions_scans(data_directory: str, file_extension: str) 
                 parent_session = entry.parent.name
                 parent_subject = entry.parent.parent.name
 
-                # Extract metadata with flexibility for folder structure
-                parent_session = entry.parent.parent.name if entry.parent.parent else "unknown"
-                parent_subject = entry.parent.parent.parent.name if entry.parent.parent and entry.parent.parent.parent else "unknown"
+                if raw:
+                    # Extract metadata with flexibility for folder structure
+                    parent_session = entry.parent.parent.name if entry.parent.parent else "unknown"
+                    parent_subject = entry.parent.parent.parent.name if entry.parent.parent and entry.parent.parent.parent else "unknown"
 
                 # Ensure the hierarchy is valid
                 if not parent_subject.startswith("sub-"):
@@ -372,7 +373,7 @@ def is_valid_dicom(file_obj):
 
 def list_non_bids_subjects_sessions_scans( # TODO: Could be better as a class.
     data_directory: str, zip: bool
-) -> DefaultDict[str, DefaultDict[str, DefaultDict[str, DefaultDict[str, str]]]]:
+) -> dict[str, dict[str, dict[str, dict[str, str]]]]:
     """
     Recursively traverses directories to list files by subject, session, and scan.
     
@@ -512,7 +513,7 @@ def list_non_bids_subjects_sessions_scans( # TODO: Could be better as a class.
     recursive_search(data_directory, zip)
 
     # Convert defaultdict to standard dictionary for return
-    return subjects_sessions_scans
+    return subjects_sessions_scans # TODO make this a dict not a default dict.
 
 def display_dropdown_menu(str_list: list[str], title_text: str):
     """
@@ -706,12 +707,12 @@ def process_scan(dcm_path: str, out_path: str, subject_name: str, session_name: 
     if not (os.path.isfile(nifti_file) or os.path.isfile(json_file)):
         raise RuntimeError(f"dcm2niix failed to create scan: {dcm_folder}\n{result.stderr}")
 
-    # Transfer specified DICOM fields to the JSON sidecar
-    transfer_dicom_fields_to_json(dcm_path, json_file, subject_name, session_name, scan_name, ['StudyDescription', 'SeriesDescription', 'AcquisitionDate', 'PatientAge', 'PatientWeight', 'PatientSex'])
+        # Transfer specified DICOM fields to the JSON sidecar
+        transfer_dicom_fields_to_json(dcm_path, json_file, subject_name, session_name, scan_name, ['StudyDescription', 'SeriesDescription', 'AcquisitionDate', 'PatientAge', 'PatientWeight', 'PatientSex'])
 
-        # For aMRI scans, transfer HeartRate to the JSON sidecar
-    if scan_name == 'aMRI':
-            transfer_dicom_fields_to_json(dcm_path, json_file, subject_name, session_name, scan_name, ['HeartRate'])
+            # For aMRI scans, transfer HeartRate to the JSON sidecar
+        if scan_name == 'aMRI':
+                transfer_dicom_fields_to_json(dcm_path, json_file, subject_name, session_name, scan_name, ['HeartRate'])
 
     # Remove temporary directory if used
     if use_temp_dir:
@@ -911,6 +912,7 @@ def setup_sheets(bids_dir: str) -> None:
 def create_participants_tsv(bids_dir: str) -> None:
     """
     Creates a participants.tsv file with one row per subject-session, summarizing extracted fields.
+
 
     Parameters:
     - bids_dir: str
