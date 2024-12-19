@@ -1,12 +1,10 @@
-import numpy as np
 import matplotlib.pyplot as plt
 import imageio
 import os
-from typing import Optional, Tuple, List, Dict
+from typing import Optional, List
 import nibabel as nib
 from dataclasses import dataclass
 from MRISlices import MRISlices
-from MRIVideo import MRIMedia
 from dcm2bids import display_dropdown_menu, list_bids_subjects_sessions_scans, build_series_list
 from userInteraction import prompt_user
 from plotConfig import PlotConfig

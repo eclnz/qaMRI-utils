@@ -440,16 +440,6 @@ def extract_in_plane_displacement(slice: NDArray, plane: str) -> Tuple[np.ndarra
         return disp1, disp2
 
 def extract_image_from_canvas(fig: plt.Figure, discard_alpha: bool = True) -> np.ndarray:
-    """
-    Extracts the rendered image from a Matplotlib figure's canvas as a NumPy array.
-
-    Args:
-        fig (plt.Figure): The Matplotlib figure object.
-        discard_alpha (bool): Whether to discard the alpha channel (default is True).
-
-    Returns:
-        np.ndarray: The image as a NumPy array (RGB or RGBA depending on discard_alpha).
-    """
     # Get the actual size of the canvas
     width, height = fig.canvas.get_width_height()
 
@@ -457,7 +447,7 @@ def extract_image_from_canvas(fig: plt.Figure, discard_alpha: bool = True) -> np
     buffer = np.frombuffer(fig.canvas.buffer_rgba(), dtype=np.uint8)  # type:ignore
 
     # Reshape the buffer using dynamically determined width and height
-    img_array = buffer.reshape((height, width, 4))  # Shape is (height, width, 4) for RGBA
+    img_array: NDArray[np.uint8] = buffer.reshape((height, width, 4))  # Shape is (height, width, 4) for RGBA
 
     # Discard the alpha channel if requested
     if discard_alpha:
