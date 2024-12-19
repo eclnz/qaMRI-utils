@@ -92,8 +92,14 @@ def parse_study_description(study_description: str, patient_name: str):
     
     return cohort, subject_id, session
 
-def dcm2bids(data_directory: str, bids_output_dir: str, year: str, transfer: bool = False, zip: bool = False):
+def dcm2bids(data_directory: str, bids_output_dir: str, zip: bool = False):
     bids_raw_output_dir = os.path.join(bids_output_dir, 'raw')
+    
+    if not os.path.exists(data_directory):
+        raise FileNotFoundError(f"Data directory not found: {data_directory}")
+    
+    if not os.path.exists(bids_output_dir):
+        raise FileNotFoundError(f"Data directory not found: {bids_output_dir}")
     
     # List all subjects, sessions, and scans containing the specified file type
     subjects_sessions_scans = list_non_bids_subjects_sessions_scans(data_directory, zip)
@@ -183,7 +189,7 @@ def dcm2bids(data_directory: str, bids_output_dir: str, year: str, transfer: boo
                     
                     process_scan(
                         raw_path, out_path, subject_name, session_name,
-                        standardized_scan_name, bids_raw_output_dir, transfer
+                        standardized_scan_name
                     )
                     
                 except Exception as e:
@@ -649,7 +655,7 @@ def standardize_scan_name(series_description: str) -> str:
     else:
         return series_description
 
-def process_scan(dcm_path: str, out_path: str, subject_name: str, session_name: str, scan_name: str, bids_output_dir: str, transfer: bool):
+def process_scan(dcm_path: str, out_path: str, subject_name: str, session_name: str, scan_name: str):
     """Processes each scan, converting DICOM to NIfTI and transferring metadata."""
     os.makedirs(out_path, exist_ok=True)
     dcm_folder = os.path.dirname(dcm_path)
@@ -677,7 +683,7 @@ def process_scan(dcm_path: str, out_path: str, subject_name: str, session_name: 
         return
 
     # Check for incorrect slice thickness and use a temporary directory if needed
-    if scan_name == 'aMRI' and not check_slice_thickness(dcm_path):
+    if scan_name == 'aMRI' and check_slice_thickness(dcm_path):
         use_temp_dir = True
         display_warning(f"    Incorrect slice thickness detected for {subject_name}_{session_name}_{scan_name}. Adjusting in temporary folder.")
         dcm_folder = set_slice_thickness_temp(dcm_folder)
@@ -687,20 +693,19 @@ def process_scan(dcm_path: str, out_path: str, subject_name: str, session_name: 
         use_temp_dir = False
     
     # Convert DICOM to NIfTI unless we're only transferring metadata
-    if not transfer:
-        cmd = [
-            'dcm2niix', '-z', 'y', '-b', 'y', '-w', '0',
-            '-o', out_path, '-f', f"{subject_name}_{session_name}_{scan_name}", dcm_folder
-        ]
-        result = subprocess.run(cmd, capture_output=True, text=True)
-        
-        # dcm2niix returned an error code. why did 
-        if result.returncode != 0:
-            raise RuntimeError(f"dcm2niix failed for scan: {dcm_folder} {result.stderr}")
-        
-        # dcm2niix did not fail, but were the outputs successfully created?
-        if not (os.path.isfile(nifti_file) or os.path.isfile(json_file)):
-            raise RuntimeError(f"dcm2niix failed to create scan: {dcm_folder}\n{result.stderr}")
+    cmd = [
+        'dcm2niix', '-z', 'y', '-b', 'y', '-w', '0',
+        '-o', out_path, '-f', f"{subject_name}_{session_name}_{scan_name}", dcm_folder
+    ]
+    result = subprocess.run(cmd, capture_output=True, text=True)
+    
+    # dcm2niix returned an error code. why did 
+    if result.returncode != 0:
+        raise RuntimeError(f"dcm2niix failed for scan: {dcm_folder} {result.stderr}")
+    
+    # dcm2niix did not fail, but were the outputs successfully created?
+    if not (os.path.isfile(nifti_file) or os.path.isfile(json_file)):
+        raise RuntimeError(f"dcm2niix failed to create scan: {dcm_folder}\n{result.stderr}")
 
         # Transfer specified DICOM fields to the JSON sidecar
         transfer_dicom_fields_to_json(dcm_path, json_file, subject_name, session_name, scan_name, ['StudyDescription', 'SeriesDescription', 'AcquisitionDate', 'PatientAge', 'PatientWeight', 'PatientSex'])
@@ -908,6 +913,7 @@ def create_participants_tsv(bids_dir: str) -> None:
     """
     Creates a participants.tsv file with one row per subject-session, summarizing extracted fields.
 
+
     Parameters:
     - bids_dir: str
         Path to the BIDS directory containing raw data and JSON sidecar files.
@@ -1061,26 +1067,63 @@ def extract_fields(json_path: str, fields_to_extract: List[str], warn: bool = Tr
 if __name__ == "__main__":
     import argparse
 
-    parser = argparse.ArgumentParser(description="Convert DICOM files to BIDS-compliant NIfTI format")
-    parser.add_argument("data_directory", help="Path to the directory containing subject folders with DICOM files.")
-    parser.add_argument("bids_output_dir", help="Path to the BIDS output directory.")
-    parser.add_argument("--transfer", action="store_true", help="Only transfer DICOM attributes to .json sidecar without DICOM-to-NIfTI conversion.")
-    parser.add_argument("--zip", action="store_true", help="Enable searching through zip files in addition to folders. Will fall back on looking through zip when no scans are found.")
+    parser = argparse.ArgumentParser(
+        description=(
+            "dcm2bids: Convert DICOM files to a BIDS-compliant* structure.\n\n"
+            "This script processes DICOM files, converts them to NIfTI format, "
+            "and organizes them into a BIDS-compliant* directory structure. It also "
+            "transfers relevant metadata to JSON sidecars. *File naming conventions "
+            "may not fully adhere to bids conventions in current version "
+        ),
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
+    )
 
+    # Required arguments
+    parser.add_argument(
+        "data_directory",
+        type=str,
+        help=(
+            "Path to the input directory containing all DICOM files."
+        ),
+    )
+    parser.add_argument(
+        "bids_output_dir",
+        type=str,
+        help=(
+            "Path to the output BIDS directory."
+        ),
+    )
+
+    # Optional arguments
+    parser.add_argument(
+        "--zip",
+        action="store_true",
+        help=(
+            "If specified, enables searching for and processing DICOM files within "
+            "ZIP archives. This option is useful if raw data is compressed. Note if"
+            "no scans are found zip will be enabled as a fall back"
+        ),  
+    )
+
+    # Parse arguments
     args = parser.parse_args()
 
-    dcm2bids(args.data_directory, args.bids_output_dir, args.transfer, args.zip)
+    # Call the main function
+    dcm2bids(
+        data_directory=args.data_directory,
+        bids_output_dir=args.bids_output_dir,
+        zip=args.zip,
+    )
 
-# # For debugging purposes: Manually sets folder.
+# For debugging purposes: Manually sets folder.
 # def main():
 #     # Manually specify the variables
 #     data_directory = "../qaMRI-clone/testData/raw_r"  # Replace with the actual path
 #     bids_output_dir = "../qaMRI-clone/testData/BIDS8"  # Replace with the actual path
-#     transfer = False  # Set to True to only transfer DICOM attributes without conversion
 #     zip = False
     
 #     # Run the function
-#     dcm2bids(data_directory, bids_output_dir, transfer, zip)
+#     dcm2bids(data_directory, bids_output_dir, zip)
 
 # if __name__ == "__main__":
 #     main()
