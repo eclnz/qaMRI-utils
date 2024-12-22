@@ -4,7 +4,7 @@ import nibabel as nib
 import pydicom
 from pydicom.dataset import Dataset
 from pydicom.uid import ExplicitVRLittleEndian, generate_uid
-from tempfile import TemporaryDirectory
+import tempfile
 
 # Predefined test data
 TEST_DICOM_FILES = [
@@ -56,9 +56,9 @@ def create_temp_nifti(filepath, shape=(64, 64, 64), affine=None):
 
 
 def create_temp_files(file_descriptions, directory=None):
-    """Create multiple files in a temporary directory."""
+    """Create multiple files in a temporary directory, each DICOM in its own subfolder."""
     if directory is None:
-        directory = TemporaryDirectory().name
+        directory = tempfile.mkdtemp()
 
     os.makedirs(directory, exist_ok=True)
     file_paths = []
@@ -66,9 +66,13 @@ def create_temp_files(file_descriptions, directory=None):
     for desc in file_descriptions:
         filename = desc["name"]
         filetype = desc["type"]
-        filepath = os.path.join(directory, filename)
 
         if filetype == "dicom":
+            # Create a subfolder for each DICOM using series description
+            subfolder = os.path.join(directory, desc.get("series_description", "series").replace(" ", "_"))
+            os.makedirs(subfolder, exist_ok=True)
+            filepath = os.path.join(subfolder, filename)
+
             create_temp_dicom(
                 filepath,
                 acquisition_date=desc.get("acquisition_date", "20220101"),
@@ -76,9 +80,18 @@ def create_temp_files(file_descriptions, directory=None):
                 patient_name=desc.get("patient_name", "Test_Subject"),
                 series_description=desc.get("series_description", "Series 1")
             )
-        elif filetype == "nifti":
+        else:  # nifti files stay in main directory
+            filepath = os.path.join(directory, filename)
             create_temp_nifti(filepath, shape=desc.get("shape", (64, 64, 64)), affine=desc.get("affine"))
 
         file_paths.append(filepath)
 
     return file_paths, directory
+
+
+file_paths, test_dir = create_temp_files(file_descriptions=TEST_DICOM_FILES, directory=None)
+
+from DICOMCollection import DicomCollection 
+file_paths, test_dir = create_temp_files(TEST_DICOM_FILES, test_dir)
+collection = DicomCollection()
+collection.populate_from_folder(test_dir)

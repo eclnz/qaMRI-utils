@@ -5,6 +5,7 @@ from typing import Dict, Optional, List
 import os
 import logging
 import hashlib
+import warnings
 
 @dataclass
 class DicomInfo:
@@ -144,14 +145,14 @@ class DicomCollection:
         """Try to read a file as DICOM. Returns None if not a DICOM file."""
         try:
             dicom_data = pydicom.dcmread(file_path, force=True)
-            if not hasattr(dicom_data, 'SOPInstanceUID'):
+            if not hasattr(dicom_data, 'StudyInstanceUID'):
                 return None
 
             dicom_info = DicomInfo.from_dicom(dicom_data)
             dicom_info.dcm_path = file_path
             return dicom_info
         except Exception:
-            return None
+            return None #TODO: don't know what this will do
 
     def populate_from_folder(self, folder_path: str) -> None:
         """Populate collection from a folder of DICOM files."""
@@ -164,7 +165,7 @@ class DicomCollection:
                 continue
 
             if root in processed_folders:
-                continue
+                continue #TODO: don't know what this will do
 
             # Try to find any valid DICOM in this folder
             for file in files:
@@ -174,8 +175,13 @@ class DicomCollection:
                     self.add_scan(scan)
                     processed_folders.add(root)
                     break  # Only process one DICOM per folder
+        self._check_empty()
 
-# Example usage
+    def _check_empty(self):
+        """Check if collection is empty and issue a warning if it is."""
+        if not self.scans:
+            warnings.warn("No scans found in the collection", UserWarning, stacklevel=2)
+
 if __name__ == "__main__":
     collection = DicomCollection()
     collection.populate_from_folder("/Users/edwardclarkson/git/qaMRI-clone/testData/raw_r")
