@@ -54,11 +54,20 @@ def create_temp_nifti(filepath, shape=(64, 64, 64), affine=None):
     nifti_image = nib.Nifti1Image(data, affine)
     nib.save(nifti_image, filepath)
 
-
 def create_temp_files(file_descriptions, directory=None):
-    """Create multiple files in a temporary directory, each DICOM in its own subfolder."""
+    """Create multiple files in a temporary directory, each DICOM in its own subfolder.
+    
+    Args:
+        file_descriptions (list): List of dictionaries describing files to create
+        directory (str, optional): Directory to create files in. If None, creates a temporary directory.
+    
+    Returns:
+        tuple: (list of created file paths, directory path)
+    """
     if directory is None:
         directory = tempfile.mkdtemp()
+    elif not isinstance(directory, (str, bytes, os.PathLike)):
+        raise TypeError("directory must be a string, bytes or os.PathLike object")
 
     os.makedirs(directory, exist_ok=True)
     file_paths = []
@@ -87,11 +96,3 @@ def create_temp_files(file_descriptions, directory=None):
         file_paths.append(filepath)
 
     return file_paths, directory
-
-
-file_paths, test_dir = create_temp_files(file_descriptions=TEST_DICOM_FILES, directory=None)
-
-from DICOMCollection import DicomCollection 
-file_paths, test_dir = create_temp_files(TEST_DICOM_FILES, test_dir)
-collection = DicomCollection()
-collection.populate_from_folder(test_dir)
