@@ -8,7 +8,7 @@ repos:
         pass_filenames: false
         always_run: true
         args: [
-            "--cov=.",
-            "--cov-report=term-missing",
-            "test_MediaCollection.py"
+            --cov=.,
+            --cov-report=term-missing,
+            test_MediaCollection.py
         ] 
