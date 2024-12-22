@@ -88,18 +88,19 @@ def parse_study_description(study_description: str, patient_name: str):
     
     # Validate subject ID is found
     if subject_id is None:
-        raise ValueError(f"Subject ID not found in StudyDescription or PatientName: {study_description}, {patient_name}")
+        subject_id = hash(patient_name) % 1000
+        # raise ValueError(f"Subject ID not found in StudyDescription or PatientName: {study_description}, {patient_name}")
     
     return cohort, subject_id, session
 
-def dcm2bids(data_directory: str, bids_output_dir: str, zip: bool = False):
+def dcm2bids(data_directory: str, bids_output_dir: str, zip: bool = False, force_slice_thickness: bool = False):
     bids_raw_output_dir = os.path.join(bids_output_dir, 'raw')
     
     if not os.path.exists(data_directory):
         raise FileNotFoundError(f"Data directory not found: {data_directory}")
     
     if not os.path.exists(bids_output_dir):
-        raise FileNotFoundError(f"Data directory not found: {bids_output_dir}")
+        os.mkdir(bids_output_dir)
     
     # List all subjects, sessions, and scans containing the specified file type
     subjects_sessions_scans = list_non_bids_subjects_sessions_scans(data_directory, zip)
@@ -189,7 +190,7 @@ def dcm2bids(data_directory: str, bids_output_dir: str, zip: bool = False):
                     
                     process_scan(
                         raw_path, out_path, subject_name, session_name,
-                        standardized_scan_name
+                        standardized_scan_name, force_slice_thickness=force_slice_thickness
                     )
                     
                 except Exception as e:
@@ -655,7 +656,7 @@ def standardize_scan_name(series_description: str) -> str:
     else:
         return series_description
 
-def process_scan(dcm_path: str, out_path: str, subject_name: str, session_name: str, scan_name: str):
+def process_scan(dcm_path: str, out_path: str, subject_name: str, session_name: str, scan_name: str, force_slice_thickness: bool = False):
     """Processes each scan, converting DICOM to NIfTI and transferring metadata."""
     os.makedirs(out_path, exist_ok=True)
     dcm_folder = os.path.dirname(dcm_path)
@@ -683,7 +684,7 @@ def process_scan(dcm_path: str, out_path: str, subject_name: str, session_name: 
         return
 
     # Check for incorrect slice thickness and use a temporary directory if needed
-    if scan_name == 'aMRI' and check_slice_thickness(dcm_path):
+    if scan_name == 'aMRI' and not incorrect_slice_thickness(dcm_path) or force_slice_thickness:
         use_temp_dir = True
         display_warning(f"    Incorrect slice thickness detected for {subject_name}_{session_name}_{scan_name}. Adjusting in temporary folder.")
         dcm_folder = set_slice_thickness_temp(dcm_folder)
@@ -832,7 +833,7 @@ def update_json_sidecar(json_path: str, dicom_data: Dict[str, str]):
     except Exception as e:
         raise RuntimeError(f"Failed to update JSON file at {json_path} due to: {str(e)}")
 
-def check_slice_thickness(dicom_file_path: str) -> bool:
+def incorrect_slice_thickness(dicom_file_path: str) -> bool:
     """Check if the SliceThickness to SpacingBetweenSlices ratio in the first DICOM file is >= 2."""
     dicom_data = pydicom.dcmread(dicom_file_path)
     
@@ -842,7 +843,8 @@ def check_slice_thickness(dicom_file_path: str) -> bool:
     if slice_thickness is None or spacing_between_slices is None:
         raise ValueError(f"Missing SliceThickness or SpacingBetweenSlices in file: {dicom_file_path}")
     
-    return (slice_thickness / spacing_between_slices) >= 1.95
+    incorrect_thickness = (slice_thickness / spacing_between_slices) >= 1.95
+    return incorrect_thickness
 
 def set_slice_thickness_temp(scan_dir: str) -> str:
     """
@@ -1118,12 +1120,12 @@ if __name__ == "__main__":
 # For debugging purposes: Manually sets folder.
 # def main():
 #     # Manually specify the variables
-#     data_directory = "../qaMRI-clone/testData/raw_r"  # Replace with the actual path
-#     bids_output_dir = "../qaMRI-clone/testData/BIDS8"  # Replace with the actual path
+#     data_directory = "/Users/edwardclarkson/Downloads/NewRecons"  # Replace with the actual path
+#     bids_output_dir = "../qaMRI-utils/HollyRecon"  # Replace with the actual path
 #     zip = False
     
 #     # Run the function
-#     dcm2bids(data_directory, bids_output_dir, zip)
+#     dcm2bids(data_directory, bids_output_dir, zip, force_slice_thickness=True)
 
 # if __name__ == "__main__":
 #     main()
