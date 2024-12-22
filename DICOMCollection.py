@@ -140,20 +140,43 @@ class DicomCollection:
                 unique_names.add(scan.dicom_info.SeriesDescription)
         return sorted(unique_names)
 
+    def _try_read_dicom(self, file_path: str) -> Optional[DicomInfo]:
+        """Try to read a file as DICOM. Returns None if not a DICOM file."""
+        try:
+            dicom_data = pydicom.dcmread(file_path, force=True)
+            if not hasattr(dicom_data, 'SOPInstanceUID'):
+                return None
+
+            dicom_info = DicomInfo.from_dicom(dicom_data)
+            dicom_info.dcm_path = file_path
+            return dicom_info
+        except Exception:
+            return None
+
     def populate_from_folder(self, folder_path: str) -> None:
         """Populate collection from a folder of DICOM files."""
         if not os.path.exists(folder_path):
             raise FileNotFoundError(f"Folder not found: {folder_path}")
 
-        for root, _, files in os.walk(folder_path):
+        processed_folders = set()
+        for root, dirs, files in os.walk(folder_path):
+            if dirs:  # Skip folders with subfolders
+                continue
+
+            if root in processed_folders:
+                continue
+
+            # Try to find any valid DICOM in this folder
             for file in files:
-                if file.endswith('.dcm'):
-                    file_path = os.path.join(root, file)
-                    try:
-                        dicom_data = pydicom.dcmread(file_path)
-                        dicom_info = DicomInfo.from_dicom(dicom_data)
-                        dicom_info.dcm_path = file_path
-                        scan = Scan(scan_id=dicom_info.scan_id, dicom_info=dicom_info)
-                        self.add_scan(scan)
-                    except Exception as err:
-                        logging.error(f"Failed to process DICOM file {file_path}: {err}")
+                file_path = os.path.join(root, file)
+                if dicom_info := self._try_read_dicom(file_path):
+                    scan = Scan(scan_id=dicom_info.scan_id, dicom_info=dicom_info)
+                    self.add_scan(scan)
+                    processed_folders.add(root)
+                    break  # Only process one DICOM per folder
+
+# Example usage
+if __name__ == "__main__":
+    collection = DicomCollection()
+    collection.populate_from_folder("/Users/edwardclarkson/git/qaMRI-clone/testData/raw_r")
+    print(collection.get_unique_scan_names())
