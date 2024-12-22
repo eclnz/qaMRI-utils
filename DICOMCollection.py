@@ -181,8 +181,3 @@ class DicomCollection:
         """Check if collection is empty and issue a warning if it is."""
         if not self.scans:
             warnings.warn("No scans found in the collection", UserWarning, stacklevel=2)
-
-if __name__ == "__main__":
-    collection = DicomCollection()
-    collection.populate_from_folder("/Users/edwardclarkson/git/qaMRI-clone/testData/raw_r")
-    print(collection.get_unique_scan_names())
