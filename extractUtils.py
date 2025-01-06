@@ -5,9 +5,7 @@ import warnings
 from typing import List, Dict, Union, Tuple, Optional
 from processingUtils import crop_to_nonzero, apply_crop_bounds
 import nibabel as nib
-from dcm2bids import list_subjects_sessions_scans
-
-import numpy as np
+from dcm2bids import list_bids_subjects_sessions_scans
 
 def extract_displacement_data(displacement_data_5d: np.ndarray, axis_index: int) -> Tuple[np.ndarray, np.ndarray]:
     """
@@ -326,9 +324,9 @@ def extract_group_displacements(bids_dir: str, mni_tf: bool, rois: Optional[List
     # Determine the appropriate file extension based on MNI or parcellation choice
     file_extension = 'motion.nii.gz' if mni_tf else 'motion_map.nii.gz'
     if mni_tf:
-        motion_images = list_subjects_sessions_scans(os.path.join(bids_dir,'derivatives','registration'), file_extension, bids=True)
+        motion_images = list_bids_subjects_sessions_scans(os.path.join(bids_dir,'derivatives','registration'), file_extension)
     else:
-        motion_images = list_subjects_sessions_scans(os.path.join(bids_dir,'derivatives','aMRI'), file_extension, bids=True)
+        motion_images = list_bids_subjects_sessions_scans(os.path.join(bids_dir,'derivatives','aMRI'), file_extension)
 
     # Initialize dictionary to store subject motion displacements
     subject_motion_displacements = {}
