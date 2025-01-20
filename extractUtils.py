@@ -6,6 +6,10 @@ from typing import List, Dict, Union, Tuple, Optional
 from processingUtils import crop_to_nonzero, apply_crop_bounds
 import nibabel as nib
 from dcm2bids import list_bids_subjects_sessions_scans
+import logging
+
+# Configure logging at the beginning of your script
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
 def extract_displacement_data(displacement_data_5d: np.ndarray, axis_index: int) -> Tuple[np.ndarray, np.ndarray]:
     """
@@ -131,9 +135,12 @@ def extract_subject_parcellation_displacements(motion_file: str, parcellation_fi
             - 'y': (mean_displacement, std_displacement) for the y-axis
             - 'z': (mean_displacement, std_displacement) for the z-axis
     """
-
+    
+    logging.info("Starting extraction of subject parcellation displacements.")
+    
     # Validate that files are in NIfTI format
     if not motion_file.endswith(('.nii', '.nii.gz')) or not parcellation_file.endswith(('.nii', '.nii.gz')):
+        logging.error("Both motion_file and parcellation_file must be NIfTI files with extensions .nii or .nii.gz.")
         raise ValueError("Both motion_file and parcellation_file must be NIfTI files with extensions .nii or .nii.gz.")
 
     # Load valid ROIs and their corresponding labels
@@ -143,8 +150,12 @@ def extract_subject_parcellation_displacements(motion_file: str, parcellation_fi
     matched_rois = {roi: label for roi, label in zip(valid_rois, roi_labels) if roi in roi_names}
     unmatched_rois = set(roi_names) - set(matched_rois.keys())
 
+    if not roi_labels:
+        raise ValueError("When 'mni_tf' is False, either 'rois' must be specified or one of the collection flags must be set.")
+
     if unmatched_rois:
-        print(f"Warning: The following ROI names do not match any valid ROIs and will be ignored: {', '.join(unmatched_rois)}")
+        raise ValueError(f"The following ROI names do not match any valid ROIs and will be ignored: {', '.join(unmatched_rois)}")
+    
     if not matched_rois:
         raise ValueError("None of the provided ROI names match the valid ROIs.")
 
@@ -163,6 +174,7 @@ def extract_subject_parcellation_displacements(motion_file: str, parcellation_fi
 
     # Process each matched ROI
     for region_name, region_label in matched_rois.items():
+        logging.info(f"Processing ROI: {region_name} (Label: {region_label})")  # Log each ROI being processed
         # Create a binary mask for the current region
         region_mask = parcellation_data == region_label
 
@@ -181,9 +193,11 @@ def extract_subject_parcellation_displacements(motion_file: str, parcellation_fi
                 'z': (z_mean, z_std)
             }
         except Exception as e:
-            print(f"Error processing ROI: {region_name} (Label: {region_label})")
-            print(f"Error: {e}")
+            logging.error(f"Error processing ROI: {region_name} (Label: {region_label})")
+            logging.error(f"Error: {e}")
 
+    logging.info("Extraction of subject parcellation displacements completed successfully.")
+    
     return displacements
 
 def get_subcortical_rois() -> List[str]:
@@ -337,12 +351,15 @@ def extract_group_displacements(bids_dir: str, mni_tf: bool, rois: Optional[List
 
         # Iterate over each session for the subject
         for session, scans in sessions.items():
-            print(f"Processing {subject} {session}")
+            logging.info(f"Processing {subject} {session}")
 
             # Ensure each session has exactly one motion file
             if len(scans) != 1:
                 raise ValueError("Each session should have exactly one motion file.")
-            motion_file = list(scans.values())[0][0]  # Assuming there's only one file path per session
+            if not scans or all(len(scan) == 0 for scan in scans.values()):
+                logging.error("Error: No valid scans found for the specified BIDS directory.")
+                raise ValueError("No valid scans found for the specified BIDS directory.")
+            motion_file = list(scans.values())[0]["scan_path"]  # Assuming there's only one file path per session
 
             # Extract displacements using the appropriate function
             if mni_tf:
@@ -353,7 +370,7 @@ def extract_group_displacements(bids_dir: str, mni_tf: bool, rois: Optional[List
                 
                 # Check if the parcellation file exists
                 if not os.path.isfile(parcellation_file):
-                    warnings.warn(f"Segmentation image missing: {parcellation_file}")
+                    logging.warning(f"Segmentation image missing: {parcellation_file}")
                     continue
 
                 # Extract displacements for the specified ROIs using the parcellation method

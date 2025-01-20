@@ -1,8 +1,8 @@
 import os
 import sys
 import argparse
+import logging
 from typing import List, Optional
-import pandas as pd
 from extractUtils import (
     extract_group_displacements,
     convert_displacements_to_dataframe,
@@ -10,6 +10,9 @@ from extractUtils import (
     get_ventricle_rois,
     get_valid_rois
 )
+
+# Configure logging
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
 def extract_and_save_displacements(bids_dir: str, mni_tf: bool, rois: Optional[List[str]], output_csv: str,
                                  collect_all: bool = False, collect_subcortical: bool = False,
@@ -37,7 +40,7 @@ def extract_and_save_displacements(bids_dir: str, mni_tf: bool, rois: Optional[L
     """
     # Ensure the BIDS directory exists
     if not os.path.isdir(bids_dir):
-        print(f"Error: The specified BIDS directory '{bids_dir}' does not exist.")
+        logging.error(f"The specified BIDS directory '{bids_dir}' does not exist.")
         sys.exit(1)
 
     # Handle ROI collection based on flags
@@ -53,24 +56,19 @@ def extract_and_save_displacements(bids_dir: str, mni_tf: bool, rois: Optional[L
             rois = get_ventricle_rois()
         
         if not rois:
-            print("Error: When 'mni_tf' is False, either 'rois' must be specified or one of the collection flags must be set.")
+            logging.error("When 'mni_tf' is False, either 'rois' must be specified or one of the collection flags must be set.")
             sys.exit(1)
 
     # Run the extraction
-    try:
-        displacements = extract_group_displacements(bids_dir, mni_tf, rois if not mni_tf else [])
-        print("Displacements successfully extracted.")
-        
-        # Convert the displacements dictionary to a DataFrame
-        displacement_df = convert_displacements_to_dataframe(displacements)
-        
-        # Save the DataFrame to a CSV file
-        displacement_df.to_csv(output_csv, index=False)
-        print(f"Displacement data saved to {output_csv}")
+    displacements = extract_group_displacements(bids_dir, mni_tf, rois if not mni_tf else [])
+    logging.info("Displacements successfully extracted.")
     
-    except Exception as e:
-        print(f"An error occurred while extracting displacements: {e}")
-        sys.exit(1)
+    # Convert the displacements dictionary to a DataFrame
+    displacement_df = convert_displacements_to_dataframe(displacements)
+
+    # Save the DataFrame to a CSV file
+    displacement_df.to_csv(output_csv, index=False)
+    logging.info(f"Displacement data saved to {output_csv}")
 
 if __name__ == "__main__":
     # Parse command-line arguments
