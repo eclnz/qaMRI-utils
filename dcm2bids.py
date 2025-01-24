@@ -322,7 +322,7 @@ def list_bids_subjects_sessions_scans(data_directory: str, file_extension: str, 
                 else:
                     recursive_traverse(entry)
 
-            elif entry.is_file() and entry.name.endswith(file_extension):
+            elif entry.is_file() and (entry.name.endswith(file_extension) or file_extension in entry.name):
                 # Extract metadata
                 parent_session = entry.parent.name
                 parent_subject = entry.parent.parent.name
