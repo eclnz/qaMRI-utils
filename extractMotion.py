@@ -13,7 +13,14 @@ from extractUtils import (
 )
 
 # Configure logging
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+logging.basicConfig(
+    level=logging.INFO, 
+    format='%(asctime)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.FileHandler('extractMotion.log'),
+        logging.StreamHandler()
+    ]
+)
 
 def extract_and_save_displacements(bids_dir: str, mni_tf: bool, rois: Optional[List[str]], output_path: str,
                                  collect_all: bool = False, collect_subcortical: bool = False,
