@@ -318,7 +318,7 @@ def extract_subject_mni_displacements(motion_file: str) -> Dict[str, Dict[str, T
 
     return displacements
 
-def extract_group_displacements(bids_dir: str, mni_tf: bool, rois: Optional[List[str]]) -> Dict[str, Dict[str, Dict[str, Dict[str, Dict[str, Tuple[np.ndarray, np.ndarray]]]]]]:
+def extract_group_displacements(bids_dir: str, mni_tf: bool, rois: Optional[List[str]], noise: bool) -> Dict[str, Dict[str, Dict[str, Dict[str, Dict[str, Tuple[np.ndarray, np.ndarray]]]]]]:
     """
     Extracts motion displacements for a group of subjects from motion files within a BIDS directory structure.
 
@@ -329,18 +329,27 @@ def extract_group_displacements(bids_dir: str, mni_tf: bool, rois: Optional[List
         Boolean indicating whether to use MNI-space displacements or parcellation-based displacements.
     - rois: Optional[List[str]]
         List of region of interest names for parcellation-based displacements. Required if mni_tf is False.
+    - noise: bool
+        Boolean indicating whether to use noise-based displacements.
 
     Returns:
     - Dict[str, Dict[str, Dict[str, Dict[str, Dict[str, Tuple[np.ndarray, np.ndarray]]]]]]
         A nested dictionary with mean and standard deviation displacements for each subject, session, and ROI.
     """
 
-    # Determine the appropriate file extension based on MNI or parcellation choice
-    file_extension = 'motion.nii.gz' if mni_tf else 'motion_map.nii.gz'
-    if mni_tf:
-        motion_images = list_bids_subjects_sessions_scans(os.path.join(bids_dir,'derivatives','registration'), file_extension)
-    else:
-        motion_images = list_bids_subjects_sessions_scans(os.path.join(bids_dir,'derivatives','aMRI'), file_extension)
+    # Determine the appropriate file location and extension 
+    if noise: # Extract noise-based displacements
+        file_extension = 'motion_map'
+        location = os.path.join(bids_dir,'derivatives','noise')
+        motion_images = list_bids_subjects_sessions_scans(location, file_extension)
+    elif mni_tf: # Extract MNI-space displacements
+        file_extension = 'motion.nii.gz'
+        location = os.path.join(bids_dir,'derivatives','registration')
+        motion_images = list_bids_subjects_sessions_scans(location, file_extension)
+    else: # Extract parcellation-based displacements
+        file_extension = 'motion_map.nii.gz'
+        location = os.path.join(bids_dir,'derivatives','aMRI')
+        motion_images = list_bids_subjects_sessions_scans(location, file_extension)
 
     # Initialize dictionary to store subject motion displacements
     subject_motion_displacements = {}
@@ -352,39 +361,67 @@ def extract_group_displacements(bids_dir: str, mni_tf: bool, rois: Optional[List
         # Iterate over each session for the subject
         for session, scans in sessions.items():
             logging.info(f"Processing {subject} {session}")
-
-            # Ensure each session has exactly one motion file
-            if len(scans) != 1:
-                raise ValueError("Each session should have exactly one motion file.")
-            if not scans or all(len(scan) == 0 for scan in scans.values()):
-                logging.error("Error: No valid scans found for the specified BIDS directory.")
-                raise ValueError("No valid scans found for the specified BIDS directory.")
-            motion_file = list(scans.values())[0]["scan_path"]  # Assuming there's only one file path per session
-
-            # Extract displacements using the appropriate function
-            if mni_tf:
-                displacements = extract_subject_mni_displacements(motion_file)
-            else:
-                # Generate the path to the parcellation file
-                parcellation_file = os.path.join(bids_dir, 'derivatives', 'segmentation', subject, session, f"{subject}_{session}_desc-padded_segmentation.nii.gz")
+            session_displacements = {}
+            
+            # Iterate over each scan in the session
+            for scan_name, scan_info in scans.items():
+                logging.info(f"Processing scan: {scan_name}")
                 
-                # Check if the parcellation file exists
-                if not os.path.isfile(parcellation_file):
-                    logging.warning(f"Segmentation image missing: {parcellation_file}")
+                if noise:
+                    try:
+                        motion_file = scan_info["scan_path"]
+                        file_name = os.path.basename(motion_file)
+                        noise_level = file_name.split('_')[4].split('-')[1]
+                        repeat = file_name.split('_')[5].split('-')[1].split('.')[0]
+                    except (IndexError, KeyError) as e:
+                        logging.error(f"Error parsing noise scan information: {e}")
+                        continue
+                else:
+                    motion_file = scan_info["scan_path"]
+
+                try:
+                    # Extract displacements using the appropriate function
+                    if mni_tf:
+                        displacements = extract_subject_mni_displacements(motion_file)
+                    else:
+                        # Generate the path to the parcellation file
+                        parcellation_file = os.path.join(bids_dir, 'derivatives', 'segmentation', 
+                                                       subject, session, 
+                                                       f"{subject}_{session}_desc-padded_segmentation.nii.gz")
+                        
+                        # Check if the parcellation file exists
+                        if not os.path.isfile(parcellation_file):
+                            logging.warning(f"Segmentation image missing: {parcellation_file}")
+                            continue
+
+                        # Extract displacements for the specified ROIs using the parcellation method
+                        if rois is None:
+                            raise ValueError("ROIs must be specified when using parcellation-based displacements")
+                        displacements = extract_subject_parcellation_displacements(motion_file, parcellation_file, rois)
+
+                    # Store displacements for each scan with metadata
+                    scan_data = {
+                        'displacements': displacements,
+                        'metadata': {
+                            'noise_level': noise_level,
+                            'repeat': repeat
+                        } if noise else {}
+                    }
+                    session_displacements[scan_name] = scan_data
+                    
+                except Exception as e:
+                    logging.error(f"Error processing scan {scan_name}: {e}")
                     continue
 
-                # Extract displacements for the specified ROIs using the parcellation method
-                if rois is None:
-                    raise ValueError("ROIs must be specified when using parcellation-based displacements")
-                displacements = extract_subject_parcellation_displacements(motion_file, parcellation_file, rois)
+            # Only store session data if we have processed at least one scan successfully
+            if session_displacements:
+                subject_displacements[session] = session_displacements
 
-            # Store displacements for the session
-            subject_displacements[session] = {'displacements': displacements}
+        # Only store subject data if we have processed at least one session successfully
+        if subject_displacements:
+            subject_motion_displacements[subject] = subject_displacements
 
-        # Store displacements for the subject
-        subject_motion_displacements[subject] = subject_displacements
-
-    return subject_motion_displacements
+    return subject_motion_displacements #type: ignore
 
 def convert_displacements_to_dataframe(subject_motion_displacements: Dict[str, Dict[str, Dict[str, Dict[str, Dict[str, Tuple[np.ndarray, np.ndarray]]]]]]) -> pd.DataFrame:
     """
@@ -398,7 +435,7 @@ def convert_displacements_to_dataframe(subject_motion_displacements: Dict[str, D
     Returns:
     - pd.DataFrame
         A DataFrame where each row corresponds to a subject, session, ROI, axis, and time point,
-        containing mean and standard deviation displacement values.
+        containing mean and standard deviation displacement values and metadata.
     """
     # Initialize a list to hold rows for the DataFrame
     rows = []
@@ -406,19 +443,27 @@ def convert_displacements_to_dataframe(subject_motion_displacements: Dict[str, D
     # Iterate over the nested dictionary structure
     for subject, sessions in subject_motion_displacements.items():
         for session, session_data in sessions.items():
-            for roi, roi_data in session_data['displacements'].items():
-                for axis, (mean_displacement, std_displacement) in roi_data.items():
-                    # Create a row for each time point
-                    for timepoint, (mean_val, std_val) in enumerate(zip(mean_displacement, std_displacement)):
-                        rows.append({
-                            'subject': subject,
-                            'session': session,
-                            'roi': roi,
-                            'axis': axis,
-                            'timepoint': timepoint,
-                            'mean_displacement': mean_val,
-                            'std_displacement': std_val
-                        })
+            for scan_name, scan_data in session_data.items():
+                for roi, roi_data in scan_data['displacements'].items():
+                    for axis, axis_data in roi_data.items(): #type: ignore
+                        mean_displacement, std_displacement = axis_data  # Unpack the tuple
+                        # Create a row for each time point
+                        for timepoint, (mean_val, std_val) in enumerate(zip(mean_displacement, std_displacement)):
+                            row_data = {
+                                'subject': subject,
+                                'session': session,
+                                'scan': scan_name,
+                                'roi': roi,
+                                'axis': axis,
+                                'timepoint': timepoint,
+                                'mean_displacement': mean_val,
+                                'std_displacement': std_val
+                            }
+                            # Add metadata if it exists
+                            if 'metadata' in scan_data:
+                                row_data.update(scan_data['metadata'])
+                            
+                            rows.append(row_data)
 
     # Convert the list of rows into a DataFrame
     df = pd.DataFrame(rows)
