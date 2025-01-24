@@ -1,5 +1,5 @@
 import numpy as np
-import pandas as pd
+import pandas as pd #type: ignore
 import os
 import warnings
 from typing import List, Dict, Union, Tuple, Optional
@@ -7,6 +7,8 @@ from processingUtils import crop_to_nonzero, apply_crop_bounds
 import nibabel as nib
 from dcm2bids import list_bids_subjects_sessions_scans
 import logging
+from rpy2.robjects import pandas2ri #type: ignore
+import rpy2.robjects as robjects #type: ignore
 
 # Configure logging at the beginning of your script
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -468,3 +470,28 @@ def convert_displacements_to_dataframe(subject_motion_displacements: Dict[str, D
     # Convert the list of rows into a DataFrame
     df = pd.DataFrame(rows)
     return df
+
+def save_displacement_data(df: pd.DataFrame, output_path: str) -> None:
+    """
+    Saves the displacement DataFrame to either CSV or RDS format.
+    
+    Parameters:
+    - df: pd.DataFrame
+        DataFrame containing displacement data
+    - output_path: str
+        Path where the file should be saved
+    - save_as_r: bool
+        If True, saves as RDS format, otherwise saves as CSV
+    """
+    # Check and append the appropriate file extension
+    if output_path.endswith('.rds'):
+        # Convert the DataFrame to R format
+        pandas2ri.activate()
+        robjects.globalenv['df'] = pandas2ri.py2rpy(df)
+
+        # Save as RDS
+        robjects.r('saveRDS(df, file = "{}")'.format(output_path))
+        logging.info(f"Displacement data saved to {output_path} in RDS format.")
+    elif output_path.endswith('.csv'):
+        df.to_csv(output_path, index=False)
+        logging.info(f"Displacement data saved to {output_path} in CSV format.")
