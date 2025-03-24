@@ -662,17 +662,47 @@ def standardize_scan_name(series_description: str) -> str:
     else:
         return series_description
 
+def sanitize_filename(filename: str) -> str:
+    """
+    Sanitizes a filename by removing special characters (excluding underscores),
+    replacing periods with underscores, and ensuring proper formatting.
+    
+    Args:
+        filename (str): The original filename to sanitize.
+        
+    Returns:
+        str: The sanitized filename.
+    """
+    # Replace periods with underscores (except for file extensions)
+    base_name = filename.replace('.', '_')
+    
+    # Keep only alphanumeric characters, underscores, and hyphens
+    sanitized = ''.join(c for c in base_name if c.isalnum() or c == '_' or c == '-')
+    
+    # Replace multiple consecutive underscores with a single one
+    while '__' in sanitized:
+        sanitized = sanitized.replace('__', '_')
+    
+    return sanitized
+
 def process_scan(dcm_path: str, out_path: str, subject_name: str, session_name: str, scan_name: str, force_slice_thickness: bool = False):
     """Processes each scan, converting DICOM to NIfTI and transferring metadata."""
     os.makedirs(out_path, exist_ok=True)
     dcm_folder = os.path.dirname(dcm_path)
     
-    nifti_file = os.path.join(out_path, f"{subject_name}_{session_name}_{scan_name}.nii.gz")
-    json_file = os.path.join(out_path, f"{subject_name}_{session_name}_{scan_name}.json")
-
-        # Check if output files already exist, unless we’re only transferring metadata
+    # Sanitize the scan name for the output filename
+    sanitized_scan_name = sanitize_filename(scan_name)
+    sanitized_subject_name = sanitize_filename(subject_name)
+    sanitized_session_name = sanitize_filename(session_name)
+    
+    # Use sanitized names for file output
+    output_basename = f"{sanitized_subject_name}_{sanitized_session_name}_{sanitized_scan_name}"
+    nifti_file = os.path.join(out_path, f"{output_basename}.nii.gz")
+    json_file = os.path.join(out_path, f"{output_basename}.json")
+    
+    # Check if output files already exist, unless we're only transferring metadata
     if os.path.isfile(nifti_file) and os.path.isfile(json_file):
-        print(f"\tOutput for {subject_name}_{session_name}_{scan_name} already exists. Skipping...")
+        print(f"\tOutput for {output_basename} already exists. Skipping...")
         
         # Transfer specified DICOM fields to the JSON sidecar
         transfer_dicom_fields_to_json(dcm_path, json_file, subject_name, session_name, scan_name, ['StudyDescription', 'SeriesDescription', 'AcquisitionDate', 'PatientAge', 'PatientWeight', 'PatientSex'])
@@ -681,18 +711,17 @@ def process_scan(dcm_path: str, out_path: str, subject_name: str, session_name: 
         if scan_name == 'aMRI':
             transfer_dicom_fields_to_json(dcm_path, json_file, subject_name, session_name, scan_name, ['HeartRate'])
 
-        print(f"Output for {subject_name}_{session_name}_{scan_name} already exists. Skipping...")
         return
 
     # Skip processing if cardiac images are missing for aMRI scans
     if scan_name == 'aMRI' and not check_cardiac_number_of_images(dcm_path):
-        display_error(f"Cardiac frames missing for scan {subject_name}_{session_name}_{scan_name}. Skipping...")
+        display_error(f"Cardiac frames missing for scan {output_basename}. Skipping...")
         return
 
     # Check for incorrect slice thickness and use a temporary directory if needed
     if scan_name == 'aMRI' and not incorrect_slice_thickness(dcm_path) or force_slice_thickness:
         use_temp_dir = True
-        display_warning(f"    Incorrect slice thickness detected for {subject_name}_{session_name}_{scan_name}. Adjusting in temporary folder.")
+        display_warning(f"    Incorrect slice thickness detected for {output_basename}. Adjusting in temporary folder.")
         dcm_folder = set_slice_thickness_temp(dcm_folder)
     elif '.zip:' in dcm_path:
         use_temp_dir = True
@@ -702,11 +731,11 @@ def process_scan(dcm_path: str, out_path: str, subject_name: str, session_name: 
     # Convert DICOM to NIfTI unless we're only transferring metadata
     cmd = [
         'dcm2niix', '-z', 'y', '-b', 'y', '-w', '0',
-        '-o', out_path, '-f', f"{subject_name}_{session_name}_{scan_name}", dcm_folder
+        '-o', out_path, '-f', output_basename, dcm_folder
     ]
     result = subprocess.run(cmd, capture_output=True, text=True)
     
-    # dcm2niix returned an error code. why did 
+    # dcm2niix returned an error code
     if result.returncode != 0:
         raise RuntimeError(f"dcm2niix failed for scan: {dcm_folder} {result.stderr}")
     
