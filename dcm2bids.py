@@ -148,14 +148,14 @@ def dcm2bids(data_directory: str, bids_output_dir: str, zip: bool = False, force
         
         # Check again after retrying with zip
         if not unique_series:
-            display_error("No scans were found in the specified directory")
+            logging.error("No scans were found in the specified directory")
             return None
 
     # Display dropdown menu to select series descriptions
     selected_series = display_dropdown_menu(unique_series, title_text="Select scans to add to BIDS")
     
     if len(selected_series) == 0:
-        display_error("No scans selected")
+        logging.error("No scans selected")
         return None
 
     logging.info("Selected series descriptions for processing:")
@@ -183,7 +183,7 @@ def dcm2bids(data_directory: str, bids_output_dir: str, zip: bool = False, force
             logging.info(f"  Processing Session: {session_name}")
             
             if len(scans.items()) ==0: 
-                display_error(f"No scans: {selected_series} found for {subject_name} {session_name}")
+                logging.error(f"No scans: {selected_series} found for {subject_name} {session_name}")
                 continue
 
             for scan, metadata in scans.items():
@@ -560,7 +560,7 @@ def display_dropdown_menu(str_list: List[str], title_text: str):
     Display a dropdown menu to select multiple series descriptions using arrow keys, Space to select, and Enter to confirm.
     """
     if not str_list:
-        display_error("No options were provided")
+        logging.error("No options were provided")
         return []  # Early exit if the input list is empty
 
     selected_index = 0
@@ -750,13 +750,13 @@ def process_scan(dcm_path: str, out_path: str, subject_name: str, session_name: 
 
     # Skip processing if cardiac images are missing for aMRI scans
     if scan_name == 'aMRI' and not check_cardiac_number_of_images(dcm_path):
-        display_error(f"Cardiac frames missing for scan {output_basename}. Skipping...")
+        logging.warning(f"Cardiac frames missing for scan {output_basename}. Skipping...")
         return
 
     # Check for incorrect slice thickness and use a temporary directory if needed
     if scan_name == 'aMRI' and not incorrect_slice_thickness(dcm_path) or force_slice_thickness:
         use_temp_dir = True
-        display_warning(f"    Incorrect slice thickness detected for {output_basename}. Adjusting in temporary folder.")
+        logging.warning(f"    Incorrect slice thickness detected for {output_basename}. Adjusting in temporary folder.")
         dcm_folder = set_slice_thickness_temp(dcm_folder)
     elif '.zip:' in dcm_path:
         use_temp_dir = True
@@ -948,7 +948,7 @@ def set_slice_thickness_temp(scan_dir: str) -> str:
                         # Set 'SliceThickness' to 'SpacingBetweenSlices'
                         dicom_data.SliceThickness = dicom_data.SpacingBetweenSlices
                     else:
-                        display_warning(f"Warning: 'SpacingBetweenSlices' not found in {filename}. Skipping file.")
+                        logging.warning(f"Warning: 'SpacingBetweenSlices' not found in {filename}. Skipping file.")
                         continue  # Skip this file if 'SpacingBetweenSlices' is missing
 
                     # Save the modified file to the temporary directory
@@ -956,22 +956,9 @@ def set_slice_thickness_temp(scan_dir: str) -> str:
                     dicom_data.save_as(output_path)
                 
                 except Exception as e:
-                    display_error(f"Failed to process {filename}: {e}")
+                    logging.error(f"Failed to process {filename}: {e}")
 
     return temp_dir
-
-def display_warning(message):
-    """Prints a warning message in yellow."""
-    YELLOW = "\033[93m"
-    RESET = "\033[0m"
-    print(f"{YELLOW}Warning: {message}{RESET}")
-
-
-def display_error(message):
-    """Prints an error message in red."""
-    RED = "\033[91m"
-    RESET = "\033[0m"
-    print(f"{RED}Error: {message}{RESET}")
 
 def setup_sheets(bids_dir: str) -> None:
     """
@@ -1139,7 +1126,7 @@ def extract_fields(json_path: str, fields_to_extract: List[str], warn: bool = Tr
     for field in fields_to_extract:
         attributes[field] = str(json_data.get(field, 'NA'))
         if field not in json_data and warn:
-            display_warning(f'Missing field "{field}" in JSON file: {json_path}')
+            logging.warning(f'Missing field "{field}" in JSON file: {json_path}')
     return attributes
 
 def main():
