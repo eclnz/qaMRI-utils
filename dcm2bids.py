@@ -743,12 +743,12 @@ def process_scan(dcm_path: str, out_path: str, subject_name: str, session_name: 
     if not (os.path.isfile(nifti_file) or os.path.isfile(json_file)):
         raise RuntimeError(f"dcm2niix failed to create scan: {dcm_folder}\n{result.stderr}")
 
-        # Transfer specified DICOM fields to the JSON sidecar
-        transfer_dicom_fields_to_json(dcm_path, json_file, subject_name, session_name, scan_name, ['StudyDescription', 'SeriesDescription', 'AcquisitionDate', 'PatientAge', 'PatientWeight', 'PatientSex'])
+    # Transfer specified DICOM fields to the JSON sidecar
+    transfer_dicom_fields_to_json(dcm_path, json_file, subject_name, session_name, scan_name, ['StudyDescription', 'SeriesDescription', 'AcquisitionDate', 'PatientAge', 'PatientWeight', 'PatientSex'])
 
-            # For aMRI scans, transfer HeartRate to the JSON sidecar
-        if scan_name == 'aMRI':
-                transfer_dicom_fields_to_json(dcm_path, json_file, subject_name, session_name, scan_name, ['HeartRate'])
+    # For aMRI scans, transfer HeartRate to the JSON sidecar
+    if scan_name.lower() == 'amri' or :
+        transfer_dicom_fields_to_json(dcm_path, json_file, subject_name, session_name, scan_name, ['HeartRate'])
 
     # Remove temporary directory if used
     if use_temp_dir:
@@ -1152,15 +1152,15 @@ if __name__ == "__main__":
         zip=args.zip,
     )
 
-# For debugging purposes: Manually sets folder.
+# # For debugging purposes: Manually sets folder.
 # def main():
 #     # Manually specify the variables
-#     data_directory = "/Users/edwardclarkson/Downloads/NewRecons"  # Replace with the actual path
-#     bids_output_dir = "../qaMRI-utils/HollyRecon"  # Replace with the actual path
+#     data_directory = "/Users/edwardclarkson/Downloads/59-cine_trufi_3d_Pulse_trig_1x1x1.2mm"  # Replace with the actual path
+#     bids_output_dir = "/Users/edwardclarkson/Downloads/recon"  # Replace with the actual path
 #     zip = False
     
 #     # Run the function
-#     dcm2bids(data_directory, bids_output_dir, zip, force_slice_thickness=True)
+#     dcm2bids(data_directory, bids_output_dir, zip)
 
 # if __name__ == "__main__":
 #     main()
