@@ -7,7 +7,6 @@ import pydicom
 from pydicom import DataElement
 import subprocess
 import shutil
-import warnings
 from collections import defaultdict
 import curses
 import textwrap
@@ -837,7 +836,11 @@ def transfer_dicom_fields_to_json(dicom_file_path: str, json_path: str, subject_
         raise FileNotFoundError(f"Dicom does not exist: {dicom_file_path}")
 
     # Extract specified fields from the first DICOM file in the scan directory
-    dicom_data = extract_dicom_fields(dicom_file_path, dicom_fields)
+    try:
+        dicom_data = extract_dicom_fields(dicom_file_path, dicom_fields)
+    except Exception as e:
+        logging.warning(f"Failed to extract DICOM fields from {dicom_file_path}: {e}")
+        return
     
     # Update the JSON sidecar with the extracted DICOM fields
     update_json_sidecar(json_path, dicom_data)
@@ -854,17 +857,13 @@ def extract_dicom_fields(dicom_file_path: str, dicom_fields: List[str]) -> Dict[
     - Dict[str, str]: Dictionary containing extracted DICOM fields.
     """
     dicom_data = {}
-    try:
-        info = pydicom.dcmread(dicom_file_path, force=True)
-        for field in dicom_fields:
-            if hasattr(info, field):
-                dicom_data[field] = getattr(info, field)
-            else:
-                print(f"DICOM field {field} not found in file {dicom_file_path}.")
-                dicom_data[field] = "Not found"
-    except Exception as e:
-        raise RuntimeError(f"Failed to read DICOM or extract fields due to: {str(e)}")
     
+    info = pydicom.dcmread(dicom_file_path, force=True)
+    for field in dicom_fields:
+        if hasattr(info, field):
+            dicom_data[field] = getattr(info, field)
+        else:
+            raise RuntimeError(f"DICOM field {field} not found in file {dicom_file_path}.")
     return dicom_data
 
 def update_json_sidecar(json_path: str, dicom_data: Dict[str, str]):
