@@ -734,19 +734,6 @@ def process_scan(dcm_path: str, out_path: str, subject_name: str, session_name: 
     output_basename = f"{sanitized_subject_name}_{sanitized_session_name}_{sanitized_scan_name}"
     nifti_file = os.path.join(out_path, f"{output_basename}.nii.gz")
     json_file = os.path.join(out_path, f"{output_basename}.json")
-    
-    # Check if output files already exist, unless we're only transferring metadata
-    if os.path.isfile(nifti_file) and os.path.isfile(json_file):
-        print(f"\tOutput for {output_basename} already exists. Skipping...")
-        
-        # Transfer specified DICOM fields to the JSON sidecar
-        transfer_dicom_fields_to_json(dcm_path, json_file, subject_name, session_name, scan_name, ['StudyDescription', 'SeriesDescription', 'AcquisitionDate', 'PatientAge', 'PatientWeight', 'PatientSex'])
-
-        # For aMRI scans, transfer HeartRate to the JSON sidecar
-        if scan_name == 'aMRI':
-            transfer_dicom_fields_to_json(dcm_path, json_file, subject_name, session_name, scan_name, ['HeartRate'])
-
-        return
 
     # Skip processing if cardiac images are missing for aMRI scans
     if scan_name == 'aMRI' and not check_cardiac_number_of_images(dcm_path):
