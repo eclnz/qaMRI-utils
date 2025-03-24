@@ -104,7 +104,7 @@ def parse_study_description(study_description: str, patient_name: str):
     
     return cohort, subject_id, session
 
-def dcm2bids(data_directory: str, bids_output_dir: str, zip: bool = False, force_slice_thickness: bool = False, conversion_method: str = 'dcm2niix'):
+def dcm2bids(data_directory: str, bids_output_dir: str, zip: bool = False, force_slice_thickness: bool = False, conversion_method: str = 'dcm2niix', preserve: bool = False):
     bids_raw_output_dir = os.path.join(bids_output_dir, 'raw')
     
     if not os.path.exists(data_directory):
@@ -115,6 +115,20 @@ def dcm2bids(data_directory: str, bids_output_dir: str, zip: bool = False, force
     
     # List all subjects, sessions, and scans containing the specified file type
     subjects_sessions_scans = list_non_bids_subjects_sessions_scans(data_directory, zip)
+
+    # If preserve is enabled, adjust the output directory structure
+    if preserve:
+        for subject_id, sessions in subjects_sessions_scans.items():
+            for session_id, scans in sessions.items():
+                for scan, metadata in scans.items():
+                    raw_path = metadata["dicom_path"]
+                    out_path = os.path.join(bids_raw_output_dir, os.path.relpath(raw_path, data_directory))
+                    os.makedirs(os.path.dirname(out_path), exist_ok=True)
+                    process_scan(
+                        raw_path, os.path.dirname(out_path), subject_id, session_id, scan,
+                        force_slice_thickness=force_slice_thickness, conversion_method=conversion_method
+                    )
+        return
 
     # Build the series structure and get unique series descriptions
     unique_series = build_series_list(subjects_sessions_scans)
@@ -1164,6 +1178,11 @@ def main():
         default='dcm2niix',
         help="Specify the DICOM to NIfTI conversion method to use."
     )
+    parser.add_argument(
+        "--preserve",
+        action="store_true",
+        help="Preserve the original directory structure when converting scans."
+    )
 
     # Parse arguments
     args = parser.parse_args()
@@ -1176,7 +1195,8 @@ def main():
         data_directory=args.data_directory,
         bids_output_dir=args.bids_output_dir,
         zip=args.zip,
-        conversion_method=args.conversion_method
+        conversion_method=args.conversion_method,
+        preserve=args.preserve
     )
 
 if __name__ == "__main__":
