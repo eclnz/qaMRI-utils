@@ -753,7 +753,7 @@ def process_scan(dcm_path: str, out_path: str, subject_name: str, session_name: 
     # Convert DICOM to NIfTI using the specified method
     if conversion_method == 'mrconvert':
         cmd = [
-            'mrconvert', dcm_folder, nifti_file
+            'mrconvert', dcm_folder, nifti_file, '-json_export', json_file
         ]
     else:  # Default to dcm2niix
         cmd = [
