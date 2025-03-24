@@ -133,7 +133,14 @@ def dcm2bids(data_directory: str, bids_output_dir: str, zip: bool = False, force
     # Process only scans that match the selected series descriptions
     for subject_id, sessions in subjects_sessions_scans.items():
         # Include cohort in subject name 
-        cohort = next(iter(next(iter(sessions.values())).values())).get("cohort", "unknown") if sessions else "unknown"
+        cohort = "unknown"
+        if sessions:  # Check if sessions dictionary is not empty
+            first_session = next(iter(sessions.values()))
+            if first_session:  # Check if first session has scans
+                first_scan = next(iter(first_session.values()))
+                if first_scan and "cohort" in first_scan:
+                    cohort = first_scan["cohort"]
+                    
         subject_name = f"sub-{cohort}{subject_id}"
         print(f"Processing Subject: {subject_name}")
 
@@ -164,7 +171,6 @@ def dcm2bids(data_directory: str, bids_output_dir: str, zip: bool = False, force
                     standardized_scan_name = standardize_scan_name(series_description)
 
                     out_path = os.path.join(bids_raw_output_dir, subject_name, session_name, scan_group)
-                        
 
                     # Check if the raw path is from a ZIP
                     if '.zip:' in raw_path:
