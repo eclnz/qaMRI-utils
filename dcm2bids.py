@@ -686,6 +686,8 @@ def sanitize_filename(filename: str) -> str:
         str: The sanitized filename.
     """
     # Replace periods with underscores (except for file extensions)
+    filename = str(filename)
+    
     base_name = filename.replace('.', '_')
     
     # Keep only alphanumeric characters, underscores, and hyphens
