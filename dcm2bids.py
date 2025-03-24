@@ -269,7 +269,7 @@ def extract_dicom_from_zip(zip_path: str, internal_path: str, temp_dir: str) -> 
         print(f"Error extracting DICOM files from {zip_path}: {e}")
         return ""
 
-def build_series_list(subjects_sessions_scans: dict[str, dict[str, dict[str, dict[str, str]]]]) -> list:
+def build_series_list(subjects_sessions_scans: Dict[str, Dict[str, Dict[str, Dict[str, str]]]]) -> list:
     """
     Finds all unique scan names in the subjects_sessions_scans structure.
 
@@ -380,7 +380,7 @@ def is_valid_dicom(file_obj):
 
 def list_non_bids_subjects_sessions_scans( # TODO: Could be better as a class.
     data_directory: str, zip: bool
-) -> dict[str, dict[str, dict[str, dict[str, str]]]]:
+) -> Dict[str, Dict[str, Dict[str, Dict[str, str]]]]:
     """
     Recursively traverses directories to list files by subject, session, and scan.
     
@@ -522,7 +522,7 @@ def list_non_bids_subjects_sessions_scans( # TODO: Could be better as a class.
     # Convert defaultdict to standard dictionary for return
     return subjects_sessions_scans # TODO make this a dict not a default dict.
 
-def display_dropdown_menu(str_list: list[str], title_text: str):
+def display_dropdown_menu(str_list: List[str], title_text: str):
     """
     Display a dropdown menu to select multiple series descriptions using arrow keys, Space to select, and Enter to confirm.
     """
