@@ -113,23 +113,30 @@ def dcm2bids(data_directory: str, bids_output_dir: str, zip: bool = False, force
     if not os.path.exists(bids_output_dir):
         os.mkdir(bids_output_dir)
     
-    # List all subjects, sessions, and scans containing the specified file type
-    subjects_sessions_scans = list_non_bids_subjects_sessions_scans(data_directory, zip)
-
-    # If preserve is enabled, adjust the output directory structure
     if preserve:
-        for subject_id, sessions in subjects_sessions_scans.items():
-            for session_id, scans in sessions.items():
-                for scan, metadata in scans.items():
-                    raw_path = metadata["dicom_path"]
-                    out_path = os.path.join(bids_raw_output_dir, os.path.relpath(raw_path, data_directory))
-                    os.makedirs(os.path.dirname(out_path), exist_ok=True)
-                    process_scan(
-                        raw_path, os.path.dirname(out_path), subject_id, session_id, scan,
-                        force_slice_thickness=force_slice_thickness, conversion_method=conversion_method
-                    )
+        # Traverse the input directory and replicate its structure, processing only first DICOM in each subfolder
+        processed_folders = set()
+        for root, _, files in os.walk(data_directory):
+            if root in processed_folders:
+                continue
+            for file in files:
+                if not file.endswith('.dcm'):  # Assuming DICOM files have a .dcm extension
+                    continue
+                raw_path = os.path.join(root, file)
+                relative_path = os.path.relpath(raw_path, data_directory)
+                out_path = os.path.join(bids_raw_output_dir, os.path.dirname(relative_path))
+                os.makedirs(out_path, exist_ok=True)
+                process_scan(
+                    raw_path, out_path, "unknown_subject", "unknown_session", file,
+                    force_slice_thickness=force_slice_thickness, conversion_method=conversion_method
+                )
+                processed_folders.add(root)
+                break  # Move to next folder after processing first DICOM
         return
 
+    # Existing logic for non-preserve mode
+    subjects_sessions_scans = list_non_bids_subjects_sessions_scans(data_directory, zip)
+    
     # Build the series structure and get unique series descriptions
     unique_series = build_series_list(subjects_sessions_scans)
     
