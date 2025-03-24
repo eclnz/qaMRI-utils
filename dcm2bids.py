@@ -18,6 +18,7 @@ from helperFunctions import sanitize_string
 import io
 from collections import defaultdict
 import logging
+import argparse
 
 # Configure logging
 def setup_logging(verbose: bool = False):
@@ -1118,70 +1119,63 @@ def extract_fields(json_path: str, fields_to_extract: List[str], warn: bool = Tr
             display_warning(f'Missing field "{field}" in JSON file: {json_path}')
     return attributes
 
-# if __name__ == "__main__":
-#     import argparse
-
-#     parser = argparse.ArgumentParser(
-#         description=(
-#             "dcm2bids: Convert DICOM files to a BIDS-compliant* structure.\n\n"
-#             "This script processes DICOM files, converts them to NIfTI format, "
-#             "and organizes them into a BIDS-compliant* directory structure. It also "
-#             "transfers relevant metadata to JSON sidecars. *File naming conventions "
-#             "may not fully adhere to bids conventions in current version "
-#         ),
-#         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
-#     )
-
-#     # Required arguments
-#     parser.add_argument(
-#         "data_directory",
-#         type=str,
-#         help=(
-#             "Path to the input directory containing all DICOM files."
-#         ),
-#     )
-#     parser.add_argument(
-#         "bids_output_dir",
-#         type=str,
-#         help=(
-#             "Path to the output BIDS directory."
-#         ),
-#     )
-
-#     # Optional arguments
-#     parser.add_argument(
-#         "--zip",
-#         action="store_true",
-#         help=(
-#             "If specified, enables searching for and processing DICOM files within "
-#             "ZIP archives. This option is useful if raw data is compressed. Note if"
-#             "no scans are found zip will be enabled as a fall back"
-#         ),  
-#     )
-
-#     # Parse arguments
-#     args = parser.parse_args()
-
-#     # Call the main function
-#     dcm2bids(
-#         data_directory=args.data_directory,
-#         bids_output_dir=args.bids_output_dir,
-#         zip=args.zip,
-#     )
-
-# For debugging purposes: Manually sets folder.
 def main():
-    # Manually specify the variables
-    data_directory = "/Users/edwardclarkson/Downloads/59-cine_trufi_3d_Pulse_trig_1x1x12mm"  # Replace with the actual path
-    bids_output_dir = "/Users/edwardclarkson/Downloads/recon"  # Replace with the actual path
-    zip = False
-    verbose = True  # Set to True for detailed logging, False for basic logging
-    
+    # Set up argument parser
+    parser = argparse.ArgumentParser(
+        description=(
+            "dcm2bids: Convert DICOM files to a BIDS-compliant* structure.\n\n"
+            "This script processes DICOM files, converts them to NIfTI format, "
+            "and organizes them into a BIDS-compliant* directory structure. It also "
+            "transfers relevant metadata to JSON sidecars. *File naming conventions "
+            "may not fully adhere to bids conventions in current version "
+        ),
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
+    )
+
+    # Required arguments
+    parser.add_argument(
+        "data_directory",
+        type=str,
+        help="Path to the input directory containing all DICOM files."
+    )
+    parser.add_argument(
+        "bids_output_dir",
+        type=str,
+        help="Path to the output BIDS directory."
+    )
+
+    # Optional arguments
+    parser.add_argument(
+        "--zip",
+        action="store_true",
+        help="Enable searching for and processing DICOM files within ZIP archives."
+    )
+    parser.add_argument(
+        "-v", "--verbose",
+        action="store_true",
+        help="Enable detailed logging output."
+    )
+    parser.add_argument(
+        "-c", "--conversion-method",
+        type=str,
+        choices=['dcm2niix', 'mrconvert'],
+        default='dcm2niix',
+        help="Specify the DICOM to NIfTI conversion method to use."
+    )
+
+    # Parse arguments
+    args = parser.parse_args()
+
     # Set up logging
-    setup_logging(verbose)
-    
-    # Run the function
-    dcm2bids(data_directory, bids_output_dir, zip)
+    setup_logging(args.verbose)
+
+    # Call the main function
+    dcm2bids(
+        data_directory=args.data_directory,
+        bids_output_dir=args.bids_output_dir,
+        zip=args.zip,
+        conversion_method=args.conversion_method
+    )
 
 if __name__ == "__main__":
     main()

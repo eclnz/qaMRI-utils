@@ -271,3 +271,4 @@ bids_test/*
 *.nii.gz
 *.csv
 
+3D-q-aMRI/
