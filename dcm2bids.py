@@ -17,6 +17,16 @@ from datetime import datetime
 from helperFunctions import sanitize_string
 import io
 from collections import defaultdict
+import logging
+
+# Configure logging
+def setup_logging(verbose: bool = False):
+    log_level = logging.DEBUG if verbose else logging.INFO
+    logging.basicConfig(
+        level=log_level,
+        format='%(asctime)s - %(levelname)s - %(message)s',
+        datefmt='%Y-%m-%d %H:%M:%S'
+    )
 
 # Define categories and their keywords
 SCAN_CATEGORIES = {
@@ -126,9 +136,9 @@ def dcm2bids(data_directory: str, bids_output_dir: str, zip: bool = False, force
         display_error("No scans selected")
         return None
 
-    print("Selected series descriptions for processing:")
+    logging.info("Selected series descriptions for processing:")
     for series in selected_series:
-        print(f" - {series}")
+        logging.info(f" - {series}")
         
     # Process only scans that match the selected series descriptions
     for subject_id, sessions in subjects_sessions_scans.items():
@@ -142,13 +152,13 @@ def dcm2bids(data_directory: str, bids_output_dir: str, zip: bool = False, force
                     cohort = first_scan["cohort"]
                     
         subject_name = f"sub-{cohort}{subject_id}"
-        print(f"Processing Subject: {subject_name}")
+        logging.info(f"Processing Subject: {subject_name}")
 
         for session_id, scans in sessions.items():
             # Extract the year from the session metadata
             year = scans[next(iter(scans))]["date"] if scans else "unknown"
             session_name = f"ses-{year}{session_id}"
-            print(f"  Processing Session: {session_name}")
+            logging.info(f"  Processing Session: {session_name}")
             
             if len(scans.items()) ==0: 
                 display_error(f"No scans: {selected_series} found for {subject_name} {session_name}")
@@ -200,7 +210,7 @@ def dcm2bids(data_directory: str, bids_output_dir: str, zip: bool = False, force
                     )
                     
                 except Exception as e:
-                    display_error(f"    Failed to process scan {scan}. Error: {e}")
+                    logging.error(f"    Failed to process scan {scan}. Error: {e}")
 
                 finally:
                     # Clean up the temporary directory if it was created
@@ -312,8 +322,10 @@ def list_bids_subjects_sessions_scans(data_directory: str, file_extension: str, 
         Args:
             path (Path): Current directory path to process.
         """
+        logging.debug(f"Traversing directory: {path}")
         for entry in path.iterdir():
             if entry.is_dir():
+                logging.debug(f"Found directory: {entry}")
                 # Handle subject directories
                 if entry.name.startswith("sub-"):
                     recursive_traverse(entry)  # Process sessions within the subject
@@ -445,74 +457,73 @@ def list_non_bids_subjects_sessions_scans( # TODO: Could be better as a class.
         Returns:
             bool: True if at least one DICOM file is found and processed, False otherwise.
         """
+        logging.debug(f"Processing ZIP file: {zip_path}")
         try:
             with zipfile.ZipFile(zip_path, 'r') as zip_file:
-                # Get all file entries in the ZIP
                 entries = zip_file.namelist()
-
-                # Track folders that have already been processed
                 processed_folders = set()
                 found_dicom = False
 
                 for file_name in entries:
-                    # Skip directories
                     if file_name.endswith('/'):
                         continue
 
-                    # Determine the folder of the current file
                     folder = '/'.join(file_name.split('/')[:-1])
 
-                    # Skip this file if its folder has already been processed
                     if folder in processed_folders:
                         continue
 
-                    # Check if the file is a valid DICOM
                     with zip_file.open(file_name) as file:
                         if is_valid_dicom(file):
-                            # Process the DICOM
+                            logging.debug(f"Valid DICOM found in ZIP: {file_name}")
                             if process_dicom(file, path_descriptor=f"{zip_path}:{file_name}"): #type: ignore
-                                # Mark this folder as processed
                                 processed_folders.add(folder)
                                 found_dicom = True
 
-                return found_dicom
+            return found_dicom
 
         except Exception as e:
-            print(f"Error processing ZIP file {zip_path}: {e}")
+            logging.error(f"Error processing ZIP file {zip_path}: {e}")
             return False
 
     def process_file(entry, zip):
         """
         Process a single file entry, either as a DICOM or a ZIP file.
         """
+        logging.debug(f"Processing file: {entry.path}")
         if entry.name.endswith('.zip') and zip:
-            process_zip(entry.path)
-            return False # Dont want to stop looking in folder containing zip because it may have other important things.
+            logging.debug(f"Found ZIP file: {entry.path}")
+            return process_zip(entry.path)
         if is_valid_dicom(entry.path):
+            logging.debug(f"Valid DICOM file: {entry.path}")
             return process_dicom(entry.path, path_descriptor=entry.path)
+        logging.debug(f"File is not a valid DICOM: {entry.path}")
         return False
 
     def recursive_search(folder_path: str, zip: bool) -> bool:
         """
         Recursively searches for DICOM files in the directory and organizes them.
         """
+        logging.debug(f"Searching directory: {folder_path}")
         try:
             with os.scandir(folder_path) as entries:
                 for entry in entries:
                     if entry.name.startswith('.'):
-                        # Skip hidden files or directories
+                        logging.debug(f"Skipping hidden file or directory: {entry.name}")
                         continue
 
                     if entry.is_dir():
+                        logging.debug(f"Found directory: {entry.path}")
                         if recursive_search(entry.path, zip):
                             continue
 
                     elif entry.is_file():
+                        logging.debug(f"Found file: {entry.path}")
                         if process_file(entry, zip):
                             return True
 
         except Exception as e:
-            print(f"Error accessing folder {folder_path}: {e}")
+            logging.error(f"Error accessing folder {folder_path}: {e}")
         
         return False
 
@@ -1161,9 +1172,13 @@ def extract_fields(json_path: str, fields_to_extract: List[str], warn: bool = Tr
 # For debugging purposes: Manually sets folder.
 def main():
     # Manually specify the variables
-    data_directory = "/Users/edwardclarkson/Downloads/59-cine_trufi_3d_Pulse_trig_1x1x1.2mm"  # Replace with the actual path
+    data_directory = "/Users/edwardclarkson/Downloads/59-cine_trufi_3d_Pulse_trig_1x1x12mm"  # Replace with the actual path
     bids_output_dir = "/Users/edwardclarkson/Downloads/recon"  # Replace with the actual path
     zip = False
+    verbose = True  # Set to True for detailed logging, False for basic logging
+    
+    # Set up logging
+    setup_logging(verbose)
     
     # Run the function
     dcm2bids(data_directory, bids_output_dir, zip)
